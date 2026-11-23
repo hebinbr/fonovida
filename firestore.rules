@@ -1,0 +1,319 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- GLOBAL HELPERS ---
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidCategory(category) {
+      return category in ['RESPIRACAO', 'RESSONANCIA', 'ARTICULACAO', 'PROSODIA', 'AQUECIMENTO'];
+    }
+
+    function isValidPatientStatus(status) {
+      return status in ['ATIVO', 'PAUSA', 'ALTA'];
+    }
+
+    function isValidAppointmentType(sessionType) {
+      return sessionType in ['PRESENCIAL', 'TELEFONOAUDIOLOGIA', 'AVALIACAO'];
+    }
+
+    function isValidAppointmentStatus(status) {
+      return status in ['AGENDADA', 'CONFIRMADA', 'CONCLUIDA', 'CANCELADA'];
+    }
+
+    function isValidTherapistProfile(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 100 &&
+             (!('email' in data) || (data.email is string && data.email.size() <= 120)) &&
+             (!('crfa' in data) || (data.crfa is string && data.crfa.size() <= 40)) &&
+             (!('clinicName' in data) || (data.clinicName is string && data.clinicName.size() <= 100)) &&
+             data.defaultReminderMinutes is int && data.defaultReminderMinutes >= 5 && data.defaultReminderMinutes <= 10080 &&
+             data.autoRemindersEnabled is bool;
+    }
+
+    function isValidPatient(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.fullName is string && data.fullName.size() >= 2 && data.fullName.size() <= 100 &&
+             data.ageYears is int && data.ageYears >= 1 && data.ageYears <= 120 &&
+             data.clinicalFocus is string && data.clinicalFocus.size() >= 2 && data.clinicalFocus.size() <= 120 &&
+             data.guardianName is string && data.guardianName.size() >= 2 && data.guardianName.size() <= 100 &&
+             (!('guardianPhone' in data) || (data.guardianPhone is string && data.guardianPhone.size() <= 30)) &&
+             (!('guardianEmail' in data) || (data.guardianEmail is string && data.guardianEmail.size() <= 120)) &&
+             isValidPatientStatus(data.status) &&
+             data.weeklyGoalMinutes is int && data.weeklyGoalMinutes >= 10 && data.weeklyGoalMinutes <= 1000 &&
+             (!('initialNotes' in data) || (data.initialNotes is string && data.initialNotes.size() <= 1000)) &&
+             data.dailyExerciseReminderEnabled is bool &&
+             data.reminderHour is int && data.reminderHour >= 0 && data.reminderHour <= 23 &&
+             data.reminderMinute is int && data.reminderMinute >= 0 && data.reminderMinute <= 59;
+    }
+
+    function isValidVoiceExercise(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             isValidId(data.patientId) &&
+             data.title is string && data.title.size() >= 2 && data.title.size() <= 100 &&
+             isValidCategory(data.category) &&
+             data.instructions is string && data.instructions.size() >= 2 && data.instructions.size() <= 1000 &&
+             data.targetDurationMinutes is int && data.targetDurationMinutes >= 1 && data.targetDurationMinutes <= 120 &&
+             data.frequencyPerWeek is int && data.frequencyPerWeek >= 1 && data.frequencyPerWeek <= 21 &&
+             data.activeFlag is bool;
+    }
+
+    function isValidEvolutionSession(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             isValidId(data.patientId) &&
+             data.patientName is string && data.patientName.size() >= 1 && data.patientName.size() <= 100 &&
+             data.exerciseTitle is string && data.exerciseTitle.size() >= 2 && data.exerciseTitle.size() <= 120 &&
+             isValidCategory(data.category) &&
+             data.durationMinutes is int && data.durationMinutes >= 1 && data.durationMinutes <= 240 &&
+             data.vocalClarityScore is int && data.vocalClarityScore >= 0 && data.vocalClarityScore <= 100 &&
+             data.stabilityScore is int && data.stabilityScore >= 0 && data.stabilityScore <= 100 &&
+             data.comfortScore is int && data.comfortScore >= 0 && data.comfortScore <= 100 &&
+             data.tmfSeconds is number && data.tmfSeconds >= 0 && data.tmfSeconds <= 120 &&
+             (!('clinicalNotes' in data) || (data.clinicalNotes is string && data.clinicalNotes.size() <= 1500)) &&
+             (!('homeGuidance' in data) || (data.homeGuidance is string && data.homeGuidance.size() <= 1000)) &&
+             data.sessionDateMillis is int && data.sessionDateMillis > 0;
+    }
+
+    function isValidAppointment(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             isValidId(data.patientId) &&
+             data.patientName is string && data.patientName.size() >= 1 && data.patientName.size() <= 100 &&
+             (!('guardianName' in data) || (data.guardianName is string && data.guardianName.size() <= 100)) &&
+             (!('guardianPhone' in data) || (data.guardianPhone is string && data.guardianPhone.size() <= 30)) &&
+             data.scheduledAtMillis is int && data.scheduledAtMillis > 0 &&
+             data.durationMinutes is int && data.durationMinutes >= 15 && data.durationMinutes <= 180 &&
+             isValidAppointmentType(data.sessionType) &&
+             isValidAppointmentStatus(data.status) &&
+             (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
+             data.reminderEnabled is bool &&
+             data.reminderLeadMinutes is int && data.reminderLeadMinutes >= 5 && data.reminderLeadMinutes <= 10080 &&
+             data.reminderSentMillis is int && data.reminderSentMillis >= 0;
+    }
+
+    // --- COLLECTIONS ---
+
+    match /users/{userId} {
+      allow get: if isOwner(userId) && isValidId(userId);
+      allow list: if false;
+
+      allow create: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       incoming().userId == userId &&
+                       incoming().keys().hasAll(['userId', 'displayName', 'defaultReminderMinutes', 'autoRemindersEnabled', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'email', 'crfa', 'clinicName', 'defaultReminderMinutes', 'autoRemindersEnabled', 'createdAt', 'updatedAt']) &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidTherapistProfile(incoming());
+
+      allow update: if isOwner(userId) &&
+                       isValidId(userId) &&
+                       isValidTherapistProfile(incoming()) &&
+                       incoming().userId == existing().userId &&
+                       incoming().createdAt == existing().createdAt &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'crfa', 'clinicName', 'defaultReminderMinutes', 'autoRemindersEnabled', 'updatedAt']);
+
+      allow delete: if isOwner(userId) && isValidId(userId);
+
+      // Subcollection: Patients
+      match /patients/{patientId} {
+        allow get: if isOwner(userId) && isValidId(patientId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(patientId) &&
+                         incoming().userId == userId &&
+                         incoming().keys().hasAll([
+                           'userId', 'fullName', 'ageYears', 'clinicalFocus', 'guardianName',
+                           'status', 'weeklyGoalMinutes', 'dailyExerciseReminderEnabled',
+                           'reminderHour', 'reminderMinute', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'fullName', 'ageYears', 'clinicalFocus', 'guardianName',
+                           'guardianPhone', 'guardianEmail', 'status', 'weeklyGoalMinutes',
+                           'initialNotes', 'dailyExerciseReminderEnabled', 'reminderHour',
+                           'reminderMinute', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         isValidPatient(incoming());
+
+        allow update: if isOwner(userId) &&
+                         isValidId(patientId) &&
+                         isValidPatient(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         (
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'fullName', 'ageYears', 'clinicalFocus', 'guardianName',
+                             'guardianPhone', 'guardianEmail', 'status', 'weeklyGoalMinutes',
+                             'initialNotes', 'dailyExerciseReminderEnabled', 'reminderHour',
+                             'reminderMinute', 'updatedAt'
+                           ])
+                         );
+
+        allow delete: if isOwner(userId) && isValidId(patientId);
+      }
+
+      // Subcollection: Prescribed Voice Exercises
+      match /exercises/{exerciseId} {
+        allow get: if isOwner(userId) && isValidId(exerciseId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(exerciseId) &&
+                         incoming().userId == userId &&
+                         incoming().keys().hasAll([
+                           'userId', 'patientId', 'title', 'category', 'instructions',
+                           'targetDurationMinutes', 'frequencyPerWeek', 'activeFlag',
+                           'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'patientId', 'title', 'category', 'instructions',
+                           'targetDurationMinutes', 'frequencyPerWeek', 'activeFlag',
+                           'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         isValidVoiceExercise(incoming()) &&
+                         exists(/databases/$(database)/documents/users/$(userId)/patients/$(incoming().patientId));
+
+        allow update: if isOwner(userId) &&
+                         isValidId(exerciseId) &&
+                         isValidVoiceExercise(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().patientId == existing().patientId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         (
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'title', 'category', 'instructions', 'targetDurationMinutes',
+                             'frequencyPerWeek', 'activeFlag', 'updatedAt'
+                           ])
+                         );
+
+        allow delete: if isOwner(userId) && isValidId(exerciseId);
+      }
+
+      // Subcollection: Evolution / Voice Exercise Sessions
+      match /sessions/{sessionId} {
+        allow get: if isOwner(userId) && isValidId(sessionId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(sessionId) &&
+                         incoming().userId == userId &&
+                         incoming().keys().hasAll([
+                           'userId', 'patientId', 'patientName', 'exerciseTitle', 'category',
+                           'durationMinutes', 'vocalClarityScore', 'stabilityScore',
+                           'comfortScore', 'tmfSeconds', 'sessionDateMillis', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'patientId', 'patientName', 'exerciseTitle', 'category',
+                           'durationMinutes', 'vocalClarityScore', 'stabilityScore',
+                           'comfortScore', 'tmfSeconds', 'clinicalNotes', 'homeGuidance',
+                           'sessionDateMillis', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         isValidEvolutionSession(incoming()) &&
+                         exists(/databases/$(database)/documents/users/$(userId)/patients/$(incoming().patientId));
+
+        allow update: if isOwner(userId) &&
+                         isValidId(sessionId) &&
+                         isValidEvolutionSession(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().patientId == existing().patientId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         (
+                           incoming().diff(existing()).affectedKeys().hasOnly([
+                             'patientName', 'exerciseTitle', 'category', 'durationMinutes',
+                             'vocalClarityScore', 'stabilityScore', 'comfortScore', 'tmfSeconds',
+                             'clinicalNotes', 'homeGuidance', 'sessionDateMillis', 'updatedAt'
+                           ])
+                         );
+
+        allow delete: if isOwner(userId) && isValidId(sessionId);
+      }
+
+      // Subcollection: Appointments & Reminders
+      match /appointments/{appointmentId} {
+        allow get: if isOwner(userId) && isValidId(appointmentId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(appointmentId) &&
+                         incoming().userId == userId &&
+                         incoming().keys().hasAll([
+                           'userId', 'patientId', 'patientName', 'scheduledAtMillis',
+                           'durationMinutes', 'sessionType', 'status', 'reminderEnabled',
+                           'reminderLeadMinutes', 'reminderSentMillis', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'patientId', 'patientName', 'guardianName', 'guardianPhone',
+                           'scheduledAtMillis', 'durationMinutes', 'sessionType', 'status',
+                           'notes', 'reminderEnabled', 'reminderLeadMinutes', 'reminderSentMillis',
+                           'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         isValidAppointment(incoming()) &&
+                         exists(/databases/$(database)/documents/users/$(userId)/patients/$(incoming().patientId));
+
+        allow update: if isOwner(userId) &&
+                         isValidId(appointmentId) &&
+                         isValidAppointment(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().patientId == existing().patientId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         (
+                           // Terminal state lock: CONCLUIDA or CANCELADA appointments can only update clinical notes or reminderSentMillis
+                           (
+                             (existing().status == 'CONCLUIDA' || existing().status == 'CANCELADA') &&
+                             incoming().diff(existing()).affectedKeys().hasOnly(['notes', 'updatedAt'])
+                           ) ||
+                           (
+                             !(existing().status == 'CONCLUIDA' || existing().status == 'CANCELADA') &&
+                             (
+                               incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) ||
+                               incoming().diff(existing()).affectedKeys().hasOnly(['reminderSentMillis', 'updatedAt']) ||
+                               incoming().diff(existing()).affectedKeys().hasOnly([
+                                 'patientName', 'guardianName', 'guardianPhone', 'scheduledAtMillis',
+                                 'durationMinutes', 'sessionType', 'status', 'notes',
+                                 'reminderEnabled', 'reminderLeadMinutes', 'reminderSentMillis', 'updatedAt'
+                               ])
+                             )
+                           )
+                         );
+
+        allow delete: if isOwner(userId) && isValidId(appointmentId);
+      }
+    }
+  }
+}

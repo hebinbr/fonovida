@@ -1,0 +1,573 @@
+package com.example.ui.navigation
+
+import android.Manifest
+import android.os.Build
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.CalendarMonth
+import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.People
+import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.rounded.CalendarMonth
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.People
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
+import androidx.credentials.CredentialManager
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.navigation.NavDestination.Companion.hasRoute
+import androidx.navigation.NavGraph.Companion.findStartDestination
+import androidx.navigation.compose.NavHost
+import androidx.navigation.compose.composable
+import androidx.navigation.compose.currentBackStackEntryAsState
+import androidx.navigation.compose.rememberNavController
+import androidx.navigation.toRoute
+import com.example.auth.signOut
+import com.example.data.model.ExerciseCategory
+import com.example.data.model.Patient
+import com.example.notifications.ReminderScheduler
+import com.example.pdf.ClinicalPdfExporter
+import com.example.ui.components.EditProfileDialog
+import com.example.ui.components.LogSessionDialog
+import com.example.ui.components.PatientFormDialog
+import com.example.ui.components.PrescribeExerciseDialog
+import com.example.ui.components.ScheduleAppointmentDialog
+import com.example.ui.screens.AgendaScreen
+import com.example.ui.screens.DashboardScreen
+import com.example.ui.screens.PatientDetailScreen
+import com.example.ui.screens.PatientsScreen
+import com.example.ui.screens.ProfileScreen
+import com.example.ui.viewmodel.ClinicData
+import com.example.ui.viewmodel.FonoViewModel
+import com.example.ui.viewmodel.UiState
+import kotlinx.serialization.Serializable
+
+@Serializable
+data object RouteDashboard
+
+@Serializable
+data object RoutePatients
+
+@Serializable
+data class RoutePatientDetail(val patientId: String)
+
+@Serializable
+data object RouteAgenda
+
+@Serializable
+data object RouteProfile
+
+private data class TopLevelNavItem<T : Any>(
+    val route: T,
+    val label: String,
+    val selectedIcon: ImageVector,
+    val unselectedIcon: ImageVector,
+    val testTag: String
+)
+
+@Composable
+fun FonoAuthenticatedShell(
+    viewModel: FonoViewModel,
+    fallbackName: String,
+    fallbackEmail: String
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val credentialManager = remember { CredentialManager.create(context) }
+
+    val clinicState by viewModel.clinicState.collectAsStateWithLifecycle()
+    val isBusy by viewModel.isBusy.collectAsStateWithLifecycle()
+
+    val snackbarHostState = remember { SnackbarHostState() }
+    LaunchedEffect(viewModel) {
+        viewModel.events.collect { msg ->
+            snackbarHostState.showSnackbar(msg)
+        }
+    }
+
+    val notifPermLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission()
+    ) { /* Permission result handled silently during scheduling */ }
+
+    fun ensureNotificationPermissionPrompted() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+            !ReminderScheduler.hasNotificationPermission(context)
+        ) {
+            notifPermLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+        }
+    }
+
+    var showPatientDialog by remember { mutableStateOf(false) }
+    var editingPatient by remember { mutableStateOf<Patient?>(null) }
+    var prescribeForPatientId by remember { mutableStateOf<String?>(null) }
+    var logSessionTarget by remember {
+        mutableStateOf<Triple<Patient, String, ExerciseCategory>?>(null)
+    }
+    var showScheduleDialog by remember { mutableStateOf(false) }
+    var showEditProfileDialog by remember { mutableStateOf(false) }
+
+    val navController = rememberNavController()
+    val navBackStackEntry by navController.currentBackStackEntryAsState()
+    val currentDestination = navBackStackEntry?.destination
+
+    val topItems = remember {
+        listOf(
+            TopLevelNavItem(RouteDashboard, "Início", Icons.Rounded.Home, Icons.Outlined.Home, "nav_dashboard"),
+            TopLevelNavItem(RoutePatients, "Pacientes", Icons.Rounded.People, Icons.Outlined.People, "nav_patients"),
+            TopLevelNavItem(RouteAgenda, "Agenda", Icons.Rounded.CalendarMonth, Icons.Outlined.CalendarMonth, "nav_agenda"),
+            TopLevelNavItem(RouteProfile, "Perfil", Icons.Rounded.Person, Icons.Outlined.Person, "nav_profile")
+        )
+    }
+
+    val isDetailRoute = currentDestination?.hasRoute<RoutePatientDetail>() == true
+
+    fun navigateTopLevel(route: Any) {
+        navController.navigate(route) {
+            popUpTo(navController.graph.findStartDestination().id) {
+                saveState = true
+            }
+            launchSingleTop = true
+            restoreState = true
+        }
+    }
+
+    BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+        val useRail = maxWidth >= 600.dp
+
+        Scaffold(
+            contentWindowInsets = WindowInsets.safeDrawing,
+            snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+            bottomBar = {
+                if (!useRail && !isDetailRoute) {
+                    NavigationBar {
+                        topItems.forEach { item ->
+                            val selected = currentDestination?.hasRoute(item.route::class) == true
+                            NavigationBarItem(
+                                selected = selected,
+                                onClick = { navigateTopLevel(item.route) },
+                                icon = {
+                                    Icon(
+                                        imageVector = if (selected) item.selectedIcon else item.unselectedIcon,
+                                        contentDescription = item.label
+                                    )
+                                },
+                                label = { Text(item.label) },
+                                modifier = Modifier.testTag(item.testTag)
+                            )
+                        }
+                    }
+                }
+            }
+        ) { innerPadding ->
+            Row(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+            ) {
+                if (useRail && !isDetailRoute) {
+                    NavigationRail(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .statusBarsPadding()
+                            .navigationBarsPadding()
+                    ) {
+                        Spacer(Modifier.height(12.dp))
+                        topItems.forEach { item ->
+                            val selected = currentDestination?.hasRoute(item.route::class) == true
+                            NavigationRailItem(
+                                selected = selected,
+                                onClick = { navigateTopLevel(item.route) },
+                                icon = {
+                                    Icon(
+                                        imageVector = if (selected) item.selectedIcon else item.unselectedIcon,
+                                        contentDescription = item.label
+                                    )
+                                },
+                                label = { Text(item.label) },
+                                modifier = Modifier.testTag(item.testTag)
+                            )
+                        }
+                    }
+                }
+
+                Box(modifier = Modifier.weight(1f).fillMaxSize()) {
+                    when (val state = clinicState) {
+                        UiState.Loading -> {
+                            Column(
+                                modifier = Modifier.fillMaxSize(),
+                                verticalArrangement = Arrangement.Center,
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                CircularProgressIndicator()
+                                Spacer(Modifier.height(12.dp))
+                                Text(
+                                    text = "Carregando prontuários e agenda...",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        is UiState.Error -> {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .padding(24.dp),
+                                verticalArrangement = Arrangement.Center,
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Text(
+                                    text = "Não foi possível carregar os dados",
+                                    style = MaterialTheme.typography.titleMedium,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                                Spacer(Modifier.height(6.dp))
+                                Text(
+                                    text = state.message,
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+
+                        is UiState.Success<ClinicData> -> {
+                            val data = state.data
+                            val therapistDisplay = data.profile?.displayName?.ifBlank { fallbackName } ?: fallbackName
+
+                            NavHost(
+                                navController = navController,
+                                startDestination = RouteDashboard
+                            ) {
+                                composable<RouteDashboard> {
+                                    DashboardScreen(
+                                        data = data,
+                                        fallbackName = fallbackName,
+                                        onOpenPatient = { pid ->
+                                            navController.navigate(RoutePatientDetail(pid))
+                                        },
+                                        onOpenPatientsTab = { navigateTopLevel(RoutePatients) },
+                                        onOpenAgendaTab = { navigateTopLevel(RouteAgenda) },
+                                        onAddPatientClick = {
+                                            editingPatient = null
+                                            showPatientDialog = true
+                                        },
+                                        onScheduleAppointmentClick = {
+                                            if (data.patients.isEmpty()) {
+                                                viewModel.notifyMessage("Cadastre um paciente antes de agendar uma consulta.")
+                                                editingPatient = null
+                                                showPatientDialog = true
+                                            } else {
+                                                showScheduleDialog = true
+                                            }
+                                        },
+                                        onSendAppointmentReminder = { appt ->
+                                            viewModel.dispatchGuardianAppointmentReminder(
+                                                context = context,
+                                                appointment = appt,
+                                                therapistName = therapistDisplay
+                                            )
+                                        },
+                                        onConfirmAppointment = { appt ->
+                                            viewModel.updateAppointmentStatus(
+                                                context = context,
+                                                appointment = appt,
+                                                newStatus = com.example.data.model.AppointmentStatus.CONFIRMADA
+                                            )
+                                        }
+                                    )
+                                }
+
+                                composable<RoutePatients> {
+                                    PatientsScreen(
+                                        patients = data.patients,
+                                        sessions = data.sessions,
+                                        onPatientClick = { pid ->
+                                            navController.navigate(RoutePatientDetail(pid))
+                                        },
+                                        onAddPatientClick = {
+                                            editingPatient = null
+                                            showPatientDialog = true
+                                        }
+                                    )
+                                }
+
+                                composable<RoutePatientDetail> { entry ->
+                                    val route = entry.toRoute<RoutePatientDetail>()
+                                    val patient = data.patients.firstOrNull { it.id == route.patientId }
+                                    if (patient == null) {
+                                        LaunchedEffect(Unit) {
+                                            navController.popBackStack()
+                                        }
+                                    } else {
+                                        val patExercises = data.exercises.filter { it.patientId == patient.id }
+                                        val patSessions = data.sessions.filter { it.patientId == patient.id }
+
+                                        PatientDetailScreen(
+                                            patient = patient,
+                                            exercises = patExercises,
+                                            sessions = patSessions,
+                                            profile = data.profile,
+                                            onBack = { navController.popBackStack() },
+                                            onEditPatient = {
+                                                editingPatient = patient
+                                                showPatientDialog = true
+                                            },
+                                            onDeletePatient = {
+                                                viewModel.deletePatient(patient.id) {
+                                                    navController.popBackStack()
+                                                }
+                                            },
+                                            onPrescribeExercise = {
+                                                prescribeForPatientId = patient.id
+                                            },
+                                            onToggleExerciseActive = { ex ->
+                                                viewModel.toggleExerciseActive(ex)
+                                            },
+                                            onDeleteExercise = { exId ->
+                                                viewModel.deleteExercise(exId)
+                                            },
+                                            onLogSession = { prefillTitle, prefillCat ->
+                                                logSessionTarget = Triple(patient, prefillTitle, prefillCat)
+                                            },
+                                            onDeleteSession = { sessId ->
+                                                viewModel.deleteSession(sessId)
+                                            },
+                                            onExportPdf = {
+                                                ClinicalPdfExporter.generateAndShareReport(
+                                                    context = context,
+                                                    patient = patient,
+                                                    sessions = patSessions,
+                                                    exercises = patExercises,
+                                                    profile = data.profile
+                                                ).onSuccess {
+                                                    viewModel.notifyMessage("Relatório PDF gerado! Escolha o app para enviar ao responsável.")
+                                                }.onFailure { err ->
+                                                    viewModel.notifyMessage(
+                                                        err.localizedMessage ?: "Erro ao gerar relatório PDF."
+                                                    )
+                                                }
+                                            },
+                                            onSendExerciseReminder = {
+                                                viewModel.dispatchGuardianExerciseReminder(
+                                                    context = context,
+                                                    patient = patient,
+                                                    activeExercises = patExercises.filter { it.activeFlag },
+                                                    therapistName = therapistDisplay
+                                                )
+                                            }
+                                        )
+                                    }
+                                }
+
+                                composable<RouteAgenda> {
+                                    AgendaScreen(
+                                        appointments = data.appointments,
+                                        hasPatients = data.patients.isNotEmpty(),
+                                        onScheduleClick = {
+                                            if (data.patients.isEmpty()) {
+                                                viewModel.notifyMessage("Cadastre um paciente antes de agendar.")
+                                                editingPatient = null
+                                                showPatientDialog = true
+                                            } else {
+                                                showScheduleDialog = true
+                                            }
+                                        },
+                                        onOpenPatient = { pid ->
+                                            navController.navigate(RoutePatientDetail(pid))
+                                        },
+                                        onUpdateStatus = { appt, st ->
+                                            viewModel.updateAppointmentStatus(context, appt, st)
+                                        },
+                                        onSendGuardianReminder = { appt ->
+                                            viewModel.dispatchGuardianAppointmentReminder(
+                                                context = context,
+                                                appointment = appt,
+                                                therapistName = therapistDisplay
+                                            )
+                                        },
+                                        onDeleteAppointment = { apptId ->
+                                            viewModel.deleteAppointment(context, apptId)
+                                        }
+                                    )
+                                }
+
+                                composable<RouteProfile> {
+                                    ProfileScreen(
+                                        profile = data.profile,
+                                        fallbackName = fallbackName,
+                                        fallbackEmail = fallbackEmail,
+                                        patientCount = data.patients.size,
+                                        sessionCount = data.sessions.size,
+                                        onEditProfile = { showEditProfileDialog = true },
+                                        onNotifyFeedback = { viewModel.notifyMessage(it) },
+                                        onSignOut = {
+                                            signOut(credentialManager, scope)
+                                        }
+                                    )
+                                }
+                            }
+
+                            // Modal Dialogs
+                            if (showPatientDialog) {
+                                PatientFormDialog(
+                                    initialPatient = editingPatient,
+                                    isBusy = isBusy,
+                                    onDismiss = {
+                                        showPatientDialog = false
+                                        editingPatient = null
+                                    },
+                                    onConfirm = { name, age, focus, gName, gPhone, gEmail, status, goal, notes, dailyRem, rHour, rMin ->
+                                        if (dailyRem) ensureNotificationPermissionPrompted()
+                                        viewModel.savePatient(
+                                            context = context,
+                                            editingPatientId = editingPatient?.id,
+                                            fullName = name,
+                                            ageYears = age,
+                                            clinicalFocus = focus,
+                                            guardianName = gName,
+                                            guardianPhone = gPhone,
+                                            guardianEmail = gEmail,
+                                            status = status,
+                                            weeklyGoalMinutes = goal,
+                                            initialNotes = notes,
+                                            dailyExerciseReminderEnabled = dailyRem,
+                                            reminderHour = rHour,
+                                            reminderMinute = rMin,
+                                            onSuccess = {
+                                                showPatientDialog = false
+                                                editingPatient = null
+                                            }
+                                        )
+                                    }
+                                )
+                            }
+
+                            prescribeForPatientId?.let { pid ->
+                                PrescribeExerciseDialog(
+                                    isBusy = isBusy,
+                                    onDismiss = { prescribeForPatientId = null },
+                                    onConfirm = { title, cat, instructions, dur, freq ->
+                                        viewModel.prescribeExercise(
+                                            patientId = pid,
+                                            title = title,
+                                            category = cat,
+                                            instructions = instructions,
+                                            targetDurationMinutes = dur,
+                                            frequencyPerWeek = freq,
+                                            onSuccess = { prescribeForPatientId = null }
+                                        )
+                                    }
+                                )
+                            }
+
+                            logSessionTarget?.let { (pat, preTitle, preCat) ->
+                                LogSessionDialog(
+                                    patientName = pat.fullName,
+                                    prefilledTitle = preTitle,
+                                    prefilledCategory = preCat,
+                                    isBusy = isBusy,
+                                    onDismiss = { logSessionTarget = null },
+                                    onConfirm = { title, cat, dur, clarity, stability, comfort, tmf, notes, guidance ->
+                                        viewModel.logSession(
+                                            patient = pat,
+                                            exerciseTitle = title,
+                                            category = cat,
+                                            durationMinutes = dur,
+                                            vocalClarityScore = clarity,
+                                            stabilityScore = stability,
+                                            comfortScore = comfort,
+                                            tmfSeconds = tmf,
+                                            clinicalNotes = notes,
+                                            homeGuidance = guidance,
+                                            onSuccess = { logSessionTarget = null }
+                                        )
+                                    }
+                                )
+                            }
+
+                            if (showScheduleDialog) {
+                                ScheduleAppointmentDialog(
+                                    patients = data.patients,
+                                    defaultLeadMinutes = data.profile?.defaultReminderMinutes ?: 60L,
+                                    isBusy = isBusy,
+                                    onDismiss = { showScheduleDialog = false },
+                                    onConfirm = { pat, schedMillis, dur, type, notes, remEnabled, remLead ->
+                                        if (remEnabled) ensureNotificationPermissionPrompted()
+                                        viewModel.scheduleAppointment(
+                                            context = context,
+                                            patient = pat,
+                                            scheduledAtMillis = schedMillis,
+                                            durationMinutes = dur,
+                                            sessionType = type,
+                                            notes = notes,
+                                            reminderEnabled = remEnabled,
+                                            reminderLeadMinutes = remLead,
+                                            onSuccess = { showScheduleDialog = false }
+                                        )
+                                    }
+                                )
+                            }
+
+                            if (showEditProfileDialog) {
+                                EditProfileDialog(
+                                    profile = data.profile,
+                                    fallbackName = fallbackName,
+                                    isBusy = isBusy,
+                                    onDismiss = { showEditProfileDialog = false },
+                                    onConfirm = { name, crfa, clinic, lead, autoRem ->
+                                        viewModel.updateTherapistProfile(
+                                            displayName = name,
+                                            crfa = crfa,
+                                            clinicName = clinic,
+                                            defaultReminderMinutes = lead,
+                                            autoRemindersEnabled = autoRem,
+                                            onSuccess = { showEditProfileDialog = false }
+                                        )
+                                    }
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

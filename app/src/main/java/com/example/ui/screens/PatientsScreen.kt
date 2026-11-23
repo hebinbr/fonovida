@@ -1,0 +1,360 @@
+package com.example.ui.screens
+
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowForward
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import com.example.R
+import com.example.data.model.EvolutionSession
+import com.example.data.model.Patient
+import com.example.data.model.PatientStatus
+import com.example.ui.theme.StatusSuccess
+import com.example.ui.theme.StatusSuccessBg
+import com.example.ui.theme.StatusWarning
+import com.example.ui.theme.StatusWarningBg
+
+@Composable
+fun PatientsScreen(
+    patients: List<Patient>,
+    sessions: List<EvolutionSession>,
+    onPatientClick: (String) -> Unit,
+    onAddPatientClick: () -> Unit
+) {
+    var searchQuery by remember { mutableStateOf("") }
+    var selectedFilter by remember { mutableStateOf<PatientStatus?>(null) }
+
+    val filteredPatients = remember(patients, searchQuery, selectedFilter) {
+        patients.filter { pat ->
+            val matchesStatus = selectedFilter == null || pat.patientStatus == selectedFilter
+            val matchesQuery = searchQuery.isBlank() ||
+                pat.fullName.contains(searchQuery, ignoreCase = true) ||
+                pat.clinicalFocus.contains(searchQuery, ignoreCase = true) ||
+                pat.guardianName.contains(searchQuery, ignoreCase = true)
+            matchesStatus && matchesQuery
+        }
+    }
+
+    val weekAgoMillis = remember { System.currentTimeMillis() - 7L * 24L * 3600_000L }
+
+    Scaffold(
+        floatingActionButton = {
+            FloatingActionButton(
+                onClick = onAddPatientClick,
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+                modifier = Modifier.testTag("fab_add_patient")
+            ) {
+                Icon(Icons.Rounded.Add, contentDescription = "Cadastrar paciente")
+            }
+        }
+    ) { innerPadding ->
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(innerPadding),
+            contentAlignment = Alignment.TopCenter
+        ) {
+            LazyColumn(
+                modifier = Modifier
+                    .widthIn(max = 840.dp)
+                    .fillMaxSize(),
+                contentPadding = PaddingValues(start = 18.dp, end = 18.dp, top = 16.dp, bottom = 92.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                item {
+                    Text(
+                        text = "Pacientes",
+                        style = MaterialTheme.typography.headlineMedium
+                    )
+                    Text(
+                        text = "Acompanhe exercícios de voz, metas semanais e evolução clínica.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                item {
+                    OutlinedTextField(
+                        value = searchQuery,
+                        onValueChange = { searchQuery = it },
+                        placeholder = { Text("Buscar por nome, foco clínico ou responsável") },
+                        leadingIcon = { Icon(Icons.Rounded.Search, contentDescription = null) },
+                        singleLine = true,
+                        shape = RoundedCornerShape(16.dp),
+                        modifier = Modifier.fillMaxWidth().testTag("patient_search_input")
+                    )
+                }
+
+                item {
+                    Row(
+                        modifier = Modifier.horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        FilterChip(
+                            selected = selectedFilter == null,
+                            onClick = { selectedFilter = null },
+                            label = { Text("Todos (${patients.size})") }
+                        )
+                        PatientStatus.entries.forEach { st ->
+                            val count = patients.count { it.patientStatus == st }
+                            FilterChip(
+                                selected = selectedFilter == st,
+                                onClick = { selectedFilter = if (selectedFilter == st) null else st },
+                                label = { Text("${st.label} ($count)") }
+                            )
+                        }
+                    }
+                }
+
+                if (filteredPatients.isEmpty()) {
+                    item {
+                        Card(
+                            shape = MaterialTheme.shapes.large,
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(24.dp),
+                                horizontalAlignment = Alignment.CenterHorizontally
+                            ) {
+                                Image(
+                                    painter = painterResource(id = R.drawable.img_empty_patients),
+                                    contentDescription = stringResource(R.string.cd_empty_patients),
+                                    contentScale = ContentScale.Crop,
+                                    modifier = Modifier
+                                        .size(180.dp)
+                                        .clip(RoundedCornerShape(20.dp))
+                                )
+                                Spacer(modifier = Modifier.height(16.dp))
+                                Text(
+                                    text = if (patients.isEmpty()) "Nenhum paciente cadastrado ainda"
+                                    else "Nenhum paciente encontrado",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Spacer(modifier = Modifier.height(6.dp))
+                                Text(
+                                    text = if (patients.isEmpty())
+                                        "Cadastre seu primeiro paciente para prescrever exercícios vocais, acompanhar gráficos de evolução e exportar relatórios em PDF."
+                                    else "Ajuste o filtro ou o termo de busca.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                if (patients.isEmpty()) {
+                                    Spacer(modifier = Modifier.height(16.dp))
+                                    Button(onClick = onAddPatientClick) {
+                                        Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text("Cadastrar Primeiro Paciente")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    items(filteredPatients, key = { it.id }) { patient ->
+                        val patSessions = sessions.filter { it.patientId == patient.id }
+                        val latestSession = patSessions.maxByOrNull { it.sessionDateMillis }
+                        val weeklyMinutes = patSessions
+                            .filter { it.sessionDateMillis >= weekAgoMillis }
+                            .sumOf { it.durationMinutes }
+                        val goalProgress = (weeklyMinutes.toFloat() / patient.weeklyGoalMinutes.coerceAtLeast(1).toFloat())
+                            .coerceIn(0f, 1f)
+
+                        PatientSummaryCard(
+                            patient = patient,
+                            sessionCount = patSessions.size,
+                            latestClarity = latestSession?.vocalClarityScore?.toInt(),
+                            weeklyMinutes = weeklyMinutes.toInt(),
+                            goalProgress = goalProgress,
+                            onClick = { onPatientClick(patient.id) }
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun PatientSummaryCard(
+    patient: Patient,
+    sessionCount: Int,
+    latestClarity: Int?,
+    weeklyMinutes: Int,
+    goalProgress: Float,
+    onClick: () -> Unit
+) {
+    Card(
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .testTag("patient_card_${patient.id}")
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = patient.fullName,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "${patient.ageYears} anos • ${patient.clinicalFocus}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = "Responsável: ${patient.guardianName}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                val (badgeBg, badgeFg) = when (patient.patientStatus) {
+                    PatientStatus.ATIVO -> StatusSuccessBg to StatusSuccess
+                    PatientStatus.PAUSA -> StatusWarningBg to StatusWarning
+                    PatientStatus.ALTA -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
+                }
+                Surface(color = badgeBg, shape = RoundedCornerShape(50)) {
+                    Text(
+                        text = patient.patientStatus.label,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = badgeFg,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Meta semanal: $weeklyMinutes / ${patient.weeklyGoalMinutes} min",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = if (latestClarity != null) "Última clareza: $latestClarity% ($sessionCount sessões)"
+                    else "Sem sessões ainda",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+
+            Spacer(modifier = Modifier.height(6.dp))
+            LinearProgressIndicator(
+                progress = { goalProgress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(6.dp)
+                    .clip(RoundedCornerShape(50))
+            )
+
+            Spacer(modifier = Modifier.height(10.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                if (patient.dailyExerciseReminderEnabled) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Rounded.NotificationsActive,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            text = String.format(
+                                java.util.Locale("pt", "BR"),
+                                "Lembrete diário às %02d:%02d",
+                                patient.reminderHour,
+                                patient.reminderMinute
+                            ),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                } else {
+                    Spacer(Modifier.width(1.dp))
+                }
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = "Prontuário",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(16.dp)
+                    )
+                }
+            }
+        }
+    }
+}

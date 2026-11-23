@@ -1,0 +1,8 @@
+<resources>
+    <string name="app_name">FonoVida</string>
+    <string name="notification_channel_name">Lembretes Clínicos e Consultas</string>
+    <string name="notification_channel_desc">Notificações automáticas de consultas agendadas e prática de exercícios vocais.</string>
+    <string name="sign_in_google">Entrar com Google</string>
+    <string name="cd_hero_illustration">Ilustração clínica de ondas vocais e acompanhamento fonoaudiológico</string>
+    <string name="cd_empty_patients">Ilustração de prancheta com exercícios de voz</string>
+</resources>

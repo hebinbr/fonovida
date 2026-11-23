@@ -1,0 +1,6 @@
+{
+  "name": "FonoVida",
+  "description": "Aplicativo para fonoaudiólogas acompanharem a evolução de pacientes em exercícios de voz, agendarem consultas, enviarem lembretes automáticos e exportarem relatórios em PDF.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

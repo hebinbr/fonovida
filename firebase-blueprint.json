@@ -1,0 +1,395 @@
+{
+  "entities": {
+    "TherapistProfile": {
+      "title": "TherapistProfile",
+      "description": "Perfil profissional da fonoaudióloga autenticada e suas preferências padrão de lembretes.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "UID do usuário Firebase Auth."
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Nome completo da fonoaudióloga."
+        },
+        "email": {
+          "type": "string",
+          "description": "E-mail profissional da conta Google."
+        },
+        "crfa": {
+          "type": "string",
+          "description": "Número de registro no Conselho Regional de Fonoaudiologia (CRFa)."
+        },
+        "clinicName": {
+          "type": "string",
+          "description": "Nome do consultório ou clínica."
+        },
+        "defaultReminderMinutes": {
+          "type": "integer",
+          "description": "Antecedência padrão em minutos para lembretes de consulta."
+        },
+        "autoRemindersEnabled": {
+          "type": "boolean",
+          "description": "Indica se lembretes automáticos locais estão ativados."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Data de criação no servidor (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Data de atualização no servidor (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "displayName",
+        "defaultReminderMinutes",
+        "autoRemindersEnabled",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Patient": {
+      "title": "Patient",
+      "description": "Cadastro de paciente acompanhado pela fonoaudióloga, com dados do responsável e meta semanal de exercícios de voz.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "UID da fonoaudióloga proprietária."
+        },
+        "fullName": {
+          "type": "string",
+          "description": "Nome completo do paciente."
+        },
+        "ageYears": {
+          "type": "integer",
+          "description": "Idade do paciente em anos."
+        },
+        "clinicalFocus": {
+          "type": "string",
+          "description": "Diagnóstico ou foco clínico fonoaudiológico."
+        },
+        "guardianName": {
+          "type": "string",
+          "description": "Nome do responsável pelo paciente."
+        },
+        "guardianPhone": {
+          "type": "string",
+          "description": "Telefone/WhatsApp do responsável para envio de lembretes."
+        },
+        "guardianEmail": {
+          "type": "string",
+          "description": "E-mail do responsável."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["ATIVO", "PAUSA", "ALTA"],
+          "description": "Status atual do acompanhamento."
+        },
+        "weeklyGoalMinutes": {
+          "type": "integer",
+          "description": "Meta semanal de prática vocal em minutos."
+        },
+        "initialNotes": {
+          "type": "string",
+          "description": "Observações clínicas iniciais e anamnese."
+        },
+        "dailyExerciseReminderEnabled": {
+          "type": "boolean",
+          "description": "Indica se o lembrete diário de exercícios está ativo."
+        },
+        "reminderHour": {
+          "type": "integer",
+          "description": "Hora do lembrete diário (0-23)."
+        },
+        "reminderMinute": {
+          "type": "integer",
+          "description": "Minuto do lembrete diário (0-59)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Data de criação no servidor (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Data de atualização no servidor (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "fullName",
+        "ageYears",
+        "clinicalFocus",
+        "guardianName",
+        "status",
+        "weeklyGoalMinutes",
+        "dailyExerciseReminderEnabled",
+        "reminderHour",
+        "reminderMinute",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "VoiceExercise": {
+      "title": "VoiceExercise",
+      "description": "Exercício de voz prescrito para um paciente específico.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "UID da fonoaudióloga proprietária."
+        },
+        "patientId": {
+          "type": "string",
+          "description": "ID do paciente vinculado."
+        },
+        "title": {
+          "type": "string",
+          "description": "Título do exercício de voz."
+        },
+        "category": {
+          "type": "string",
+          "enum": ["RESPIRACAO", "RESSONANCIA", "ARTICULACAO", "PROSODIA", "AQUECIMENTO"],
+          "description": "Categoria fonoaudiológica do exercício."
+        },
+        "instructions": {
+          "type": "string",
+          "description": "Instruções técnicas de execução."
+        },
+        "targetDurationMinutes": {
+          "type": "integer",
+          "description": "Duração recomendada por prática em minutos."
+        },
+        "frequencyPerWeek": {
+          "type": "integer",
+          "description": "Frequência semanal recomendada."
+        },
+        "activeFlag": {
+          "type": "boolean",
+          "description": "Indica se o exercício está ativo no plano terapêutico."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Data de criação no servidor (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Data de atualização no servidor (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "patientId",
+        "title",
+        "category",
+        "instructions",
+        "targetDurationMinutes",
+        "frequencyPerWeek",
+        "activeFlag",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "EvolutionSession": {
+      "title": "EvolutionSession",
+      "description": "Registro de sessão de exercício vocal com métricas clínicas e observações para histórico e relatório PDF.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "UID da fonoaudióloga proprietária."
+        },
+        "patientId": {
+          "type": "string",
+          "description": "ID do paciente."
+        },
+        "patientName": {
+          "type": "string",
+          "description": "Nome do paciente desnormalizado para listagem rápida."
+        },
+        "exerciseTitle": {
+          "type": "string",
+          "description": "Nome do exercício realizado."
+        },
+        "category": {
+          "type": "string",
+          "enum": ["RESPIRACAO", "RESSONANCIA", "ARTICULACAO", "PROSODIA", "AQUECIMENTO"],
+          "description": "Categoria do exercício."
+        },
+        "durationMinutes": {
+          "type": "integer",
+          "description": "Duração em minutos."
+        },
+        "vocalClarityScore": {
+          "type": "integer",
+          "description": "Pontuação de clareza vocal (0-100)."
+        },
+        "stabilityScore": {
+          "type": "integer",
+          "description": "Pontuação de estabilidade e controle respiratório (0-100)."
+        },
+        "comfortScore": {
+          "type": "integer",
+          "description": "Pontuação de conforto laríngeo / ausência de tensão (0-100)."
+        },
+        "tmfSeconds": {
+          "type": "number",
+          "description": "Tempo Máximo de Fonação (TMF) em segundos."
+        },
+        "clinicalNotes": {
+          "type": "string",
+          "description": "Parecer e evolução clínica observada na sessão."
+        },
+        "homeGuidance": {
+          "type": "string",
+          "description": "Orientações práticas para os responsáveis e treino em casa."
+        },
+        "sessionDateMillis": {
+          "type": "integer",
+          "description": "Timestamp da realização da sessão em milissegundos."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Data de criação no servidor (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Data de atualização no servidor (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "patientId",
+        "patientName",
+        "exerciseTitle",
+        "category",
+        "durationMinutes",
+        "vocalClarityScore",
+        "stabilityScore",
+        "comfortScore",
+        "tmfSeconds",
+        "sessionDateMillis",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "Appointment": {
+      "title": "Appointment",
+      "description": "Consulta fonoaudiológica agendada com configurações de lembrete automático.",
+      "type": "object",
+      "properties": {
+        "userId": {
+          "type": "string",
+          "description": "UID da fonoaudióloga proprietária."
+        },
+        "patientId": {
+          "type": "string",
+          "description": "ID do paciente."
+        },
+        "patientName": {
+          "type": "string",
+          "description": "Nome do paciente."
+        },
+        "guardianName": {
+          "type": "string",
+          "description": "Nome do responsável."
+        },
+        "guardianPhone": {
+          "type": "string",
+          "description": "Telefone do responsável."
+        },
+        "scheduledAtMillis": {
+          "type": "integer",
+          "description": "Data e horário agendados em milissegundos."
+        },
+        "durationMinutes": {
+          "type": "integer",
+          "description": "Duração prevista da consulta em minutos."
+        },
+        "sessionType": {
+          "type": "string",
+          "enum": ["PRESENCIAL", "TELEFONOAUDIOLOGIA", "AVALIACAO"],
+          "description": "Modalidade da consulta."
+        },
+        "status": {
+          "type": "string",
+          "enum": ["AGENDADA", "CONFIRMADA", "CONCLUIDA", "CANCELADA"],
+          "description": "Status do agendamento."
+        },
+        "notes": {
+          "type": "string",
+          "description": "Observações do agendamento."
+        },
+        "reminderEnabled": {
+          "type": "boolean",
+          "description": "Indica se o lembrete automático está ativo."
+        },
+        "reminderLeadMinutes": {
+          "type": "integer",
+          "description": "Antecedência do lembrete em minutos."
+        },
+        "reminderSentMillis": {
+          "type": "integer",
+          "description": "Timestamp do último lembrete enviado ao responsável (0 se não enviado)."
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Data de criação no servidor (FieldValue.serverTimestamp())."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Data de atualização no servidor (FieldValue.serverTimestamp())."
+        }
+      },
+      "required": [
+        "userId",
+        "patientId",
+        "patientName",
+        "scheduledAtMillis",
+        "durationMinutes",
+        "sessionType",
+        "status",
+        "reminderEnabled",
+        "reminderLeadMinutes",
+        "reminderSentMillis",
+        "createdAt",
+        "updatedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/TherapistProfile" },
+      "description": "Perfil profissional da fonoaudióloga."
+    },
+    "/users/{userId}/patients/{patientId}": {
+      "schema": { "$ref": "#/entities/Patient" },
+      "description": "Pacientes acompanhados pela fonoaudióloga."
+    },
+    "/users/{userId}/exercises/{exerciseId}": {
+      "schema": { "$ref": "#/entities/VoiceExercise" },
+      "description": "Exercícios de voz prescritos aos pacientes."
+    },
+    "/users/{userId}/sessions/{sessionId}": {
+      "schema": { "$ref": "#/entities/EvolutionSession" },
+      "description": "Histórico de sessões de exercícios vocais e métricas de evolução."
+    },
+    "/users/{userId}/appointments/{appointmentId}": {
+      "schema": { "$ref": "#/entities/Appointment" },
+      "description": "Agenda de consultas e lembretes automáticos."
+    }
+  }
+}
