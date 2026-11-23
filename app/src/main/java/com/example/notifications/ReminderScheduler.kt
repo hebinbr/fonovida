@@ -132,46 +132,81 @@ object ReminderScheduler {
         context: Context,
         appointment: Appointment
     ) {
-        val workName = "appt_reminder_${appointment.id}"
+        val therapistWorkName = "appt_reminder_${appointment.id}"
+        val patientWorkName = "appt_patient_reminder_${appointment.id}"
         val workManager = WorkManager.getInstance(context.applicationContext)
 
-        if (!appointment.reminderEnabled || appointment.appointmentStatus.isTerminal) {
-            workManager.cancelUniqueWork(workName)
-            return
-        }
-
-        val triggerAtMillis = appointment.scheduledAtMillis - (appointment.reminderLeadMinutes * 60_000L)
-        val delayMillis = triggerAtMillis - System.currentTimeMillis()
-        if (delayMillis <= 0L) {
+        if (appointment.appointmentStatus.isTerminal) {
+            workManager.cancelUniqueWork(therapistWorkName)
+            workManager.cancelUniqueWork(patientWorkName)
             return
         }
 
         val timeText = SimpleDateFormat("dd/MM 'às' HH:mm", Locale("pt", "BR"))
             .format(Date(appointment.scheduledAtMillis))
 
-        val data = Data.Builder()
-            .putString(
-                ClinicalReminderWorker.KEY_TITLE,
-                "Consulta em breve: ${appointment.patientName}"
-            )
-            .putString(
-                ClinicalReminderWorker.KEY_MESSAGE,
-                "Sessão (${appointment.appointmentType.label}) marcada para $timeText. Lembre-se de confirmar com ${appointment.guardianName.ifBlank { "o responsável" }}."
-            )
-            .putInt(ClinicalReminderWorker.KEY_NOTIFICATION_ID, appointment.id.hashCode())
-            .build()
+        // 1. Lembrete automático para a fonoaudióloga
+        if (appointment.reminderEnabled) {
+            val triggerAtMillis = appointment.scheduledAtMillis - (appointment.reminderLeadMinutes * 60_000L)
+            val delayMillis = triggerAtMillis - System.currentTimeMillis()
+            if (delayMillis > 0L) {
+                val data = Data.Builder()
+                    .putString(
+                        ClinicalReminderWorker.KEY_TITLE,
+                        "Sua consulta em breve: ${appointment.patientName}"
+                    )
+                    .putString(
+                        ClinicalReminderWorker.KEY_MESSAGE,
+                        "Atendimento (${appointment.appointmentType.label}) marcado para $timeText."
+                    )
+                    .putInt(ClinicalReminderWorker.KEY_NOTIFICATION_ID, appointment.id.hashCode())
+                    .build()
 
-        val request = OneTimeWorkRequestBuilder<ClinicalReminderWorker>()
-            .setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
-            .setInputData(data)
-            .build()
+                val request = OneTimeWorkRequestBuilder<ClinicalReminderWorker>()
+                    .setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
+                    .setInputData(data)
+                    .build()
 
-        workManager.enqueueUniqueWork(workName, ExistingWorkPolicy.REPLACE, request)
+                workManager.enqueueUniqueWork(therapistWorkName, ExistingWorkPolicy.REPLACE, request)
+            }
+        } else {
+            workManager.cancelUniqueWork(therapistWorkName)
+        }
+
+        // 2. Lembrete automático programado para envio ao paciente / responsável
+        if (appointment.patientReminderEnabled) {
+            val triggerAtMillis = appointment.scheduledAtMillis - (appointment.patientReminderLeadMinutes * 60_000L)
+            val delayMillis = triggerAtMillis - System.currentTimeMillis()
+            if (delayMillis > 0L) {
+                val guardian = appointment.guardianName.ifBlank { "o responsável" }
+                val data = Data.Builder()
+                    .putString(
+                        ClinicalReminderWorker.KEY_TITLE,
+                        "Lembrar paciente: ${appointment.patientName}"
+                    )
+                    .putString(
+                        ClinicalReminderWorker.KEY_MESSAGE,
+                        "Hora de enviar a confirmação da consulta de $timeText para $guardian."
+                    )
+                    .putInt(ClinicalReminderWorker.KEY_NOTIFICATION_ID, appointment.id.hashCode() + 7)
+                    .build()
+
+                val request = OneTimeWorkRequestBuilder<ClinicalReminderWorker>()
+                    .setInitialDelay(delayMillis, TimeUnit.MILLISECONDS)
+                    .setInputData(data)
+                    .build()
+
+                workManager.enqueueUniqueWork(patientWorkName, ExistingWorkPolicy.REPLACE, request)
+            }
+        } else {
+            workManager.cancelUniqueWork(patientWorkName)
+        }
     }
 
     fun cancelAppointmentReminder(context: Context, appointmentId: String) {
-        WorkManager.getInstance(context.applicationContext)
-            .cancelUniqueWork("appt_reminder_$appointmentId")
+        val workManager = WorkManager.getInstance(context.applicationContext)
+        workManager.cancelUniqueWork("appt_reminder_$appointmentId")
+        workManager.cancelUniqueWork("appt_patient_reminder_$appointmentId")
     }
 
     fun scheduleDailyPatientExerciseReminder(
@@ -253,6 +288,56 @@ object ReminderScheduler {
                 appendLine("• $exerciseSummary")
             }
             appendLine("A prática diária ajuda muito na evolução da clareza e conforto vocal.")
+            append("Qualquer dúvida, estou à disposição!")
+        }
+    }
+
+    fun buildExerciseListGuardianMessage(
+        listTitle: String,
+        clinicalObjective: String,
+        itemsSummary: String,
+        patientName: String?,
+        guardianName: String?,
+        therapistName: String
+    ): String {
+        val guardian = guardianName?.ifBlank { null } ?: "Responsável"
+        return buildString {
+            appendLine("Olá, $guardian!")
+            appendLine("Aqui é $therapistName (Fonoaudiologia - FonoVida).")
+            if (!patientName.isNullOrBlank()) {
+                appendLine("Segue a lista personalizada de exercícios de voz para $patientName:")
+            } else {
+                appendLine("Segue a lista personalizada de exercícios de voz:")
+            }
+            appendLine("*$listTitle*")
+            if (clinicalObjective.isNotBlank()) {
+                appendLine("Objetivo: $clinicalObjective")
+            }
+            appendLine()
+            appendLine(itemsSummary)
+            append("Em caso de desconforto vocal, suspenda o exercício e me avise.")
+        }
+    }
+
+    fun buildPatientAccessCodeMessage(
+        patient: Patient,
+        code: String,
+        therapistName: String,
+        clinicName: String
+    ): String {
+        val guardian = patient.guardianName.ifBlank { "Olá" }
+        val clinicLabel = clinicName.ifBlank { "FonoVida" }
+        return buildString {
+            appendLine("Olá, $guardian! Tudo bem?")
+            appendLine("Aqui é $therapistName ($clinicLabel).")
+            appendLine("Gerei o código exclusivo para liberar o acesso de ${patient.fullName} aos exercícios de voz no aplicativo FonoVida:")
+            appendLine()
+            appendLine("Código de acesso: *$code*")
+            appendLine()
+            appendLine("Como usar:")
+            appendLine("1. Abra o app FonoVida")
+            appendLine("2. Selecione \"Sou Paciente\"")
+            appendLine("3. Conecte sua conta Google e digite o código *$code*")
             append("Qualquer dúvida, estou à disposição!")
         }
     }

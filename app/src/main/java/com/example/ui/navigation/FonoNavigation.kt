@@ -1,6 +1,9 @@
 package com.example.ui.navigation
 
 import android.Manifest
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -19,10 +22,12 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Assessment
 import androidx.compose.material.icons.outlined.CalendarMonth
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.People
 import androidx.compose.material.icons.outlined.Person
+import androidx.compose.material.icons.rounded.Assessment
 import androidx.compose.material.icons.rounded.CalendarMonth
 import androidx.compose.material.icons.rounded.Home
 import androidx.compose.material.icons.rounded.People
@@ -61,20 +66,26 @@ import androidx.navigation.compose.currentBackStackEntryAsState
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.toRoute
 import com.example.auth.signOut
+import com.example.data.model.CustomExerciseList
 import com.example.data.model.ExerciseCategory
 import com.example.data.model.Patient
 import com.example.notifications.ReminderScheduler
 import com.example.pdf.ClinicalPdfExporter
 import com.example.ui.components.EditProfileDialog
+import com.example.ui.components.ExerciseListBuilderDialog
 import com.example.ui.components.LogSessionDialog
 import com.example.ui.components.PatientFormDialog
+import com.example.ui.components.PickListForPatientDialog
+import com.example.ui.components.PickPatientForListDialog
 import com.example.ui.components.PrescribeExerciseDialog
 import com.example.ui.components.ScheduleAppointmentDialog
 import com.example.ui.screens.AgendaScreen
 import com.example.ui.screens.DashboardScreen
+import com.example.ui.screens.ExerciseListsScreen
 import com.example.ui.screens.PatientDetailScreen
 import com.example.ui.screens.PatientsScreen
 import com.example.ui.screens.ProfileScreen
+import com.example.ui.screens.ReportsScreen
 import com.example.ui.viewmodel.ClinicData
 import com.example.ui.viewmodel.FonoViewModel
 import com.example.ui.viewmodel.UiState
@@ -90,10 +101,16 @@ data object RoutePatients
 data class RoutePatientDetail(val patientId: String)
 
 @Serializable
+data object RouteReports
+
+@Serializable
 data object RouteAgenda
 
 @Serializable
 data object RouteProfile
+
+@Serializable
+data object RouteExerciseLists
 
 private data class TopLevelNavItem<T : Any>(
     val route: T,
@@ -107,7 +124,9 @@ private data class TopLevelNavItem<T : Any>(
 fun FonoAuthenticatedShell(
     viewModel: FonoViewModel,
     fallbackName: String,
-    fallbackEmail: String
+    fallbackEmail: String,
+    onSwitchToPatientMode: () -> Unit = {},
+    onSignedOut: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -142,7 +161,13 @@ fun FonoAuthenticatedShell(
         mutableStateOf<Triple<Patient, String, ExerciseCategory>?>(null)
     }
     var showScheduleDialog by remember { mutableStateOf(false) }
+    var schedulePrefill by remember { mutableStateOf<Pair<Long, Int>?>(null) }
     var showEditProfileDialog by remember { mutableStateOf(false) }
+    var showExerciseListBuilder by remember { mutableStateOf(false) }
+    var editingExerciseList by remember { mutableStateOf<CustomExerciseList?>(null) }
+    var listPreselectedPatient by remember { mutableStateOf<Patient?>(null) }
+    var pickingPatientForList by remember { mutableStateOf<CustomExerciseList?>(null) }
+    var pickingListForPatient by remember { mutableStateOf<Patient?>(null) }
 
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -152,12 +177,14 @@ fun FonoAuthenticatedShell(
         listOf(
             TopLevelNavItem(RouteDashboard, "Início", Icons.Rounded.Home, Icons.Outlined.Home, "nav_dashboard"),
             TopLevelNavItem(RoutePatients, "Pacientes", Icons.Rounded.People, Icons.Outlined.People, "nav_patients"),
+            TopLevelNavItem(RouteReports, "Relatórios", Icons.Rounded.Assessment, Icons.Outlined.Assessment, "nav_reports"),
             TopLevelNavItem(RouteAgenda, "Agenda", Icons.Rounded.CalendarMonth, Icons.Outlined.CalendarMonth, "nav_agenda"),
             TopLevelNavItem(RouteProfile, "Perfil", Icons.Rounded.Person, Icons.Outlined.Person, "nav_profile")
         )
     }
 
-    val isDetailRoute = currentDestination?.hasRoute<RoutePatientDetail>() == true
+    val isDetailRoute = currentDestination?.hasRoute<RoutePatientDetail>() == true ||
+        currentDestination?.hasRoute<RouteExerciseLists>() == true
 
     fun navigateTopLevel(route: Any) {
         navController.navigate(route) {
@@ -284,6 +311,7 @@ fun FonoAuthenticatedShell(
                                             navController.navigate(RoutePatientDetail(pid))
                                         },
                                         onOpenPatientsTab = { navigateTopLevel(RoutePatients) },
+                                        onOpenReportsTab = { navigateTopLevel(RouteReports) },
                                         onOpenAgendaTab = { navigateTopLevel(RouteAgenda) },
                                         onAddPatientClick = {
                                             editingPatient = null
@@ -295,6 +323,7 @@ fun FonoAuthenticatedShell(
                                                 editingPatient = null
                                                 showPatientDialog = true
                                             } else {
+                                                schedulePrefill = null
                                                 showScheduleDialog = true
                                             }
                                         },
@@ -319,12 +348,114 @@ fun FonoAuthenticatedShell(
                                     PatientsScreen(
                                         patients = data.patients,
                                         sessions = data.sessions,
+                                        accessCodes = data.accessCodes,
+                                        exerciseListsCount = data.exerciseLists.size,
+                                        onOpenExerciseLists = {
+                                            navController.navigate(RouteExerciseLists)
+                                        },
                                         onPatientClick = { pid ->
                                             navController.navigate(RoutePatientDetail(pid))
                                         },
                                         onAddPatientClick = {
                                             editingPatient = null
                                             showPatientDialog = true
+                                        }
+                                    )
+                                }
+
+                                composable<RouteExerciseLists> {
+                                    ExerciseListsScreen(
+                                        exerciseLists = data.exerciseLists,
+                                        patients = data.patients,
+                                        onBack = { navController.popBackStack() },
+                                        onCreateList = {
+                                            editingExerciseList = null
+                                            listPreselectedPatient = null
+                                            showExerciseListBuilder = true
+                                        },
+                                        onEditList = { list ->
+                                            editingExerciseList = list
+                                            listPreselectedPatient = null
+                                            showExerciseListBuilder = true
+                                        },
+                                        onDeleteList = { listId ->
+                                            viewModel.deleteExerciseList(listId)
+                                        },
+                                        onApplyList = { list ->
+                                            val boundPatient = data.patients.firstOrNull { it.id == list.patientId }
+                                            if (boundPatient != null) {
+                                                viewModel.applyExerciseListToPatient(boundPatient, list)
+                                            } else {
+                                                pickingPatientForList = list
+                                            }
+                                        },
+                                        onShareList = { list ->
+                                            val boundPatient = data.patients.firstOrNull { it.id == list.patientId }
+                                            viewModel.dispatchExerciseListShare(
+                                                context = context,
+                                                patient = boundPatient,
+                                                list = list,
+                                                therapistName = therapistDisplay
+                                            )
+                                        },
+                                        onExportPdf = { list ->
+                                            val boundPatient = data.patients.firstOrNull { it.id == list.patientId }
+                                            ClinicalPdfExporter.generateAndShareExerciseListPdf(
+                                                context = context,
+                                                list = list,
+                                                patient = boundPatient,
+                                                profile = data.profile
+                                            ).onSuccess {
+                                                viewModel.notifyMessage("PDF da lista gerado! Escolha o app para compartilhar.")
+                                            }.onFailure { err ->
+                                                viewModel.notifyMessage(err.localizedMessage ?: "Erro ao gerar PDF da lista.")
+                                            }
+                                        }
+                                    )
+                                }
+
+                                composable<RouteReports> {
+                                    ReportsScreen(
+                                        patients = data.patients,
+                                        sessions = data.sessions,
+                                        exercises = data.exercises,
+                                        profile = data.profile,
+                                        onOpenPatient = { pid ->
+                                            navController.navigate(RoutePatientDetail(pid))
+                                        },
+                                        onAddPatientClick = {
+                                            editingPatient = null
+                                            showPatientDialog = true
+                                        },
+                                        onPreviewPdf = { patient, timeframe, filteredSessions, patExercises ->
+                                            ClinicalPdfExporter.openPdfPreview(
+                                                context = context,
+                                                patient = patient,
+                                                sessions = filteredSessions,
+                                                exercises = patExercises,
+                                                profile = data.profile,
+                                                periodLabel = timeframe.label
+                                            ).onFailure { err ->
+                                                viewModel.notifyMessage(
+                                                    err.localizedMessage ?: "Nenhum visualizador de PDF encontrado."
+                                                )
+                                            }
+                                        },
+                                        onExportPdf = { patient, timeframe, filteredSessions, patExercises ->
+                                            ClinicalPdfExporter.generateAndShareReport(
+                                                context = context,
+                                                patient = patient,
+                                                sessions = filteredSessions,
+                                                exercises = patExercises,
+                                                profile = data.profile,
+                                                periodLabel = timeframe.label
+                                            ).onSuccess {
+                                                viewModel.notifyMessage("Relatório PDF gerado! Escolha o app para compartilhar.")
+                                            }.onFailure { err ->
+                                                viewModel.notifyMessage(
+                                                    err.localizedMessage ?: "Erro ao gerar relatório PDF."
+                                                )
+                                            }
                                         }
                                     )
                                 }
@@ -339,12 +470,20 @@ fun FonoAuthenticatedShell(
                                     } else {
                                         val patExercises = data.exercises.filter { it.patientId == patient.id }
                                         val patSessions = data.sessions.filter { it.patientId == patient.id }
+                                        val patLists = data.exerciseLists.filter { it.patientId == patient.id }
+                                        val activeAccessCode = data.accessCodes.firstOrNull {
+                                            it.patientId == patient.id && it.active
+                                        }
 
                                         PatientDetailScreen(
                                             patient = patient,
                                             exercises = patExercises,
                                             sessions = patSessions,
+                                            patientExerciseLists = patLists,
+                                            totalExerciseListsCount = data.exerciseLists.size,
                                             profile = data.profile,
+                                            activeAccessCode = activeAccessCode,
+                                            isAccessCodeBusy = isBusy,
                                             onBack = { navController.popBackStack() },
                                             onEditPatient = {
                                                 editingPatient = patient
@@ -355,6 +494,30 @@ fun FonoAuthenticatedShell(
                                                     navController.popBackStack()
                                                 }
                                             },
+                                            onGenerateAccessCode = {
+                                                viewModel.generatePatientAccessCode(
+                                                    patient = patient,
+                                                    data = data,
+                                                    fallbackName = fallbackName
+                                                )
+                                            },
+                                            onRevokeAccessCode = { code ->
+                                                viewModel.revokePatientAccessCode(code)
+                                            },
+                                            onShareAccessCode = { code ->
+                                                viewModel.dispatchAccessCodeShare(
+                                                    context = context,
+                                                    patient = patient,
+                                                    code = code,
+                                                    therapistName = therapistDisplay,
+                                                    clinicName = data.profile?.clinicName ?: ""
+                                                )
+                                            },
+                                            onCopyAccessCode = { code ->
+                                                val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                                clipboard?.setPrimaryClip(ClipData.newPlainText("Código FonoVida", code))
+                                                viewModel.notifyMessage("Código $code copiado!")
+                                            },
                                             onPrescribeExercise = {
                                                 prescribeForPatientId = patient.id
                                             },
@@ -362,7 +525,46 @@ fun FonoAuthenticatedShell(
                                                 viewModel.toggleExerciseActive(ex)
                                             },
                                             onDeleteExercise = { exId ->
-                                                viewModel.deleteExercise(exId)
+                                                viewModel.deleteExercise(exId, patient.id)
+                                            },
+                                            onGenerateExerciseList = {
+                                                editingExerciseList = null
+                                                listPreselectedPatient = patient
+                                                showExerciseListBuilder = true
+                                            },
+                                            onApplySavedExerciseList = {
+                                                pickingListForPatient = patient
+                                            },
+                                            onApplySpecificList = { customList ->
+                                                viewModel.applyExerciseListToPatient(patient, customList)
+                                            },
+                                            onEditExerciseList = { customList ->
+                                                editingExerciseList = customList
+                                                listPreselectedPatient = patient
+                                                showExerciseListBuilder = true
+                                            },
+                                            onDeleteExerciseList = { listId ->
+                                                viewModel.deleteExerciseList(listId)
+                                            },
+                                            onShareExerciseList = { customList ->
+                                                viewModel.dispatchExerciseListShare(
+                                                    context = context,
+                                                    patient = patient,
+                                                    list = customList,
+                                                    therapistName = therapistDisplay
+                                                )
+                                            },
+                                            onExportExerciseListPdf = { customList ->
+                                                ClinicalPdfExporter.generateAndShareExerciseListPdf(
+                                                    context = context,
+                                                    list = customList,
+                                                    patient = patient,
+                                                    profile = data.profile
+                                                ).onSuccess {
+                                                    viewModel.notifyMessage("PDF da lista gerado! Escolha o app para compartilhar.")
+                                                }.onFailure { err ->
+                                                    viewModel.notifyMessage(err.localizedMessage ?: "Erro ao gerar PDF da lista.")
+                                                }
                                             },
                                             onLogSession = { prefillTitle, prefillCat ->
                                                 logSessionTarget = Triple(patient, prefillTitle, prefillCat)
@@ -370,15 +572,30 @@ fun FonoAuthenticatedShell(
                                             onDeleteSession = { sessId ->
                                                 viewModel.deleteSession(sessId)
                                             },
-                                            onExportPdf = {
+                                            onPreviewPdf = { timeframe, filteredSessions ->
+                                                ClinicalPdfExporter.openPdfPreview(
+                                                    context = context,
+                                                    patient = patient,
+                                                    sessions = filteredSessions,
+                                                    exercises = patExercises,
+                                                    profile = data.profile,
+                                                    periodLabel = timeframe.label
+                                                ).onFailure { err ->
+                                                    viewModel.notifyMessage(
+                                                        err.localizedMessage ?: "Nenhum visualizador de PDF encontrado."
+                                                    )
+                                                }
+                                            },
+                                            onExportPdf = { timeframe, filteredSessions ->
                                                 ClinicalPdfExporter.generateAndShareReport(
                                                     context = context,
                                                     patient = patient,
-                                                    sessions = patSessions,
+                                                    sessions = filteredSessions,
                                                     exercises = patExercises,
-                                                    profile = data.profile
+                                                    profile = data.profile,
+                                                    periodLabel = timeframe.label
                                                 ).onSuccess {
-                                                    viewModel.notifyMessage("Relatório PDF gerado! Escolha o app para enviar ao responsável.")
+                                                    viewModel.notifyMessage("Relatório PDF gerado! Escolha o app para compartilhar.")
                                                 }.onFailure { err ->
                                                     viewModel.notifyMessage(
                                                         err.localizedMessage ?: "Erro ao gerar relatório PDF."
@@ -400,15 +617,40 @@ fun FonoAuthenticatedShell(
                                 composable<RouteAgenda> {
                                     AgendaScreen(
                                         appointments = data.appointments,
+                                        slotBlocks = data.slotBlocks,
                                         hasPatients = data.patients.isNotEmpty(),
+                                        isBusy = isBusy,
                                         onScheduleClick = {
                                             if (data.patients.isEmpty()) {
                                                 viewModel.notifyMessage("Cadastre um paciente antes de agendar.")
                                                 editingPatient = null
                                                 showPatientDialog = true
                                             } else {
+                                                schedulePrefill = null
                                                 showScheduleDialog = true
                                             }
+                                        },
+                                        onScheduleAtSlot = { dateMillis, hour, _ ->
+                                            if (data.patients.isEmpty()) {
+                                                viewModel.notifyMessage("Cadastre um paciente antes de agendar.")
+                                                editingPatient = null
+                                                showPatientDialog = true
+                                            } else {
+                                                schedulePrefill = dateMillis to hour
+                                                showScheduleDialog = true
+                                            }
+                                        },
+                                        onBlockSlot = { dateKey, hour, minute, dur, reason ->
+                                            viewModel.blockTimeSlot(
+                                                dateKey = dateKey,
+                                                hour = hour,
+                                                minute = minute,
+                                                durationMinutes = dur,
+                                                reason = reason
+                                            )
+                                        },
+                                        onUnblockSlot = { blockId ->
+                                            viewModel.unblockTimeSlot(blockId)
                                         },
                                         onOpenPatient = { pid ->
                                             navController.navigate(RoutePatientDetail(pid))
@@ -438,7 +680,9 @@ fun FonoAuthenticatedShell(
                                         sessionCount = data.sessions.size,
                                         onEditProfile = { showEditProfileDialog = true },
                                         onNotifyFeedback = { viewModel.notifyMessage(it) },
+                                        onSwitchToPatientMode = onSwitchToPatientMode,
                                         onSignOut = {
+                                            onSignedOut()
                                             signOut(credentialManager, scope)
                                         }
                                     )
@@ -527,10 +771,17 @@ fun FonoAuthenticatedShell(
                                 ScheduleAppointmentDialog(
                                     patients = data.patients,
                                     defaultLeadMinutes = data.profile?.defaultReminderMinutes ?: 60L,
+                                    initialDateMillis = schedulePrefill?.first,
+                                    initialHour = schedulePrefill?.second,
+                                    existingAppointments = data.appointments,
+                                    slotBlocks = data.slotBlocks,
                                     isBusy = isBusy,
-                                    onDismiss = { showScheduleDialog = false },
-                                    onConfirm = { pat, schedMillis, dur, type, notes, remEnabled, remLead ->
-                                        if (remEnabled) ensureNotificationPermissionPrompted()
+                                    onDismiss = {
+                                        showScheduleDialog = false
+                                        schedulePrefill = null
+                                    },
+                                    onConfirm = { pat, schedMillis, dur, type, notes, remEnabled, remLead, patRemEnabled, patRemLead ->
+                                        if (remEnabled || patRemEnabled) ensureNotificationPermissionPrompted()
                                         viewModel.scheduleAppointment(
                                             context = context,
                                             patient = pat,
@@ -540,7 +791,12 @@ fun FonoAuthenticatedShell(
                                             notes = notes,
                                             reminderEnabled = remEnabled,
                                             reminderLeadMinutes = remLead,
-                                            onSuccess = { showScheduleDialog = false }
+                                            patientReminderEnabled = patRemEnabled,
+                                            patientReminderLeadMinutes = patRemLead,
+                                            onSuccess = {
+                                                showScheduleDialog = false
+                                                schedulePrefill = null
+                                            }
                                         )
                                     }
                                 )
@@ -560,6 +816,67 @@ fun FonoAuthenticatedShell(
                                             defaultReminderMinutes = lead,
                                             autoRemindersEnabled = autoRem,
                                             onSuccess = { showEditProfileDialog = false }
+                                        )
+                                    }
+                                )
+                            }
+
+                            if (showExerciseListBuilder) {
+                                ExerciseListBuilderDialog(
+                                    patients = data.patients,
+                                    initialList = editingExerciseList,
+                                    preselectedPatient = listPreselectedPatient,
+                                    isBusy = isBusy,
+                                    onDismiss = {
+                                        showExerciseListBuilder = false
+                                        editingExerciseList = null
+                                        listPreselectedPatient = null
+                                    },
+                                    onConfirm = { title, objective, pat, items, applyNow ->
+                                        viewModel.saveExerciseList(
+                                            editingListId = editingExerciseList?.id,
+                                            title = title,
+                                            clinicalObjective = objective,
+                                            patient = pat,
+                                            items = items,
+                                            applyToPatientNow = applyNow,
+                                            onSuccess = {
+                                                showExerciseListBuilder = false
+                                                editingExerciseList = null
+                                                listPreselectedPatient = null
+                                            }
+                                        )
+                                    }
+                                )
+                            }
+
+                            pickingPatientForList?.let { list ->
+                                PickPatientForListDialog(
+                                    listTitle = list.title,
+                                    patients = data.patients,
+                                    isBusy = isBusy,
+                                    onDismiss = { pickingPatientForList = null },
+                                    onSelectPatient = { pat ->
+                                        viewModel.applyExerciseListToPatient(
+                                            patient = pat,
+                                            list = list,
+                                            onSuccess = { pickingPatientForList = null }
+                                        )
+                                    }
+                                )
+                            }
+
+                            pickingListForPatient?.let { pat ->
+                                PickListForPatientDialog(
+                                    patientName = pat.fullName,
+                                    lists = data.exerciseLists,
+                                    isBusy = isBusy,
+                                    onDismiss = { pickingListForPatient = null },
+                                    onSelectList = { list ->
+                                        viewModel.applyExerciseListToPatient(
+                                            patient = pat,
+                                            list = list,
+                                            onSuccess = { pickingListForPatient = null }
                                         )
                                     }
                                 )

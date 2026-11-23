@@ -46,12 +46,31 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.size
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.ArrowDownward
+import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
+import androidx.compose.material3.Surface
+import androidx.compose.ui.text.font.FontWeight
+import com.example.data.model.Appointment
 import com.example.data.model.AppointmentType
+import com.example.data.model.CuratedProtocolPresets
 import com.example.data.model.CuratedVoiceExerciseTemplates
+import com.example.data.model.CustomExerciseList
 import com.example.data.model.ExerciseCategory
+import com.example.data.model.ExerciseListItem
 import com.example.data.model.Patient
 import com.example.data.model.PatientStatus
+import com.example.data.model.SlotBlock
 import com.example.data.model.TherapistProfile
+import com.example.ui.theme.StatusDanger
+import com.example.ui.theme.StatusDangerBg
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -598,6 +617,11 @@ private fun MetricSlider(
 fun ScheduleAppointmentDialog(
     patients: List<Patient>,
     defaultLeadMinutes: Long,
+    initialDateMillis: Long? = null,
+    initialHour: Int? = null,
+    initialMinute: Int? = null,
+    existingAppointments: List<Appointment> = emptyList(),
+    slotBlocks: List<SlotBlock> = emptyList(),
     isBusy: Boolean,
     onDismiss: () -> Unit,
     onConfirm: (
@@ -607,23 +631,30 @@ fun ScheduleAppointmentDialog(
         sessionType: AppointmentType,
         notes: String,
         reminderEnabled: Boolean,
-        reminderLeadMinutes: Long
+        reminderLeadMinutes: Long,
+        patientReminderEnabled: Boolean,
+        patientReminderLeadMinutes: Long
     ) -> Unit
 ) {
     var selectedPatient by remember { mutableStateOf(patients.firstOrNull()) }
     var patientDropdownOpen by remember { mutableStateOf(false) }
 
-    val defaultCal = remember {
+    val defaultCal = remember(initialDateMillis, initialHour, initialMinute) {
         Calendar.getInstance().apply {
-            add(Calendar.DAY_OF_YEAR, 1)
-            set(Calendar.HOUR_OF_DAY, 10)
-            set(Calendar.MINUTE, 0)
+            if (initialDateMillis != null) {
+                timeInMillis = initialDateMillis
+            } else {
+                add(Calendar.DAY_OF_YEAR, 1)
+            }
+            set(Calendar.HOUR_OF_DAY, initialHour ?: 10)
+            set(Calendar.MINUTE, initialMinute ?: 0)
             set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
         }
     }
-    var selectedDateMillis by remember { mutableLongStateOf(defaultCal.timeInMillis) }
-    var selectedHour by remember { mutableIntStateOf(10) }
-    var selectedMinute by remember { mutableIntStateOf(0) }
+    var selectedDateMillis by remember(defaultCal) { mutableLongStateOf(defaultCal.timeInMillis) }
+    var selectedHour by remember(defaultCal) { mutableIntStateOf(defaultCal.get(Calendar.HOUR_OF_DAY)) }
+    var selectedMinute by remember(defaultCal) { mutableIntStateOf(defaultCal.get(Calendar.MINUTE)) }
     var showDatePicker by remember { mutableStateOf(false) }
     var showTimePicker by remember { mutableStateOf(false) }
 
@@ -632,9 +663,60 @@ fun ScheduleAppointmentDialog(
     var notes by remember { mutableStateOf("") }
     var reminderEnabled by remember { mutableStateOf(true) }
     var reminderLeadMinutes by remember { mutableLongStateOf(defaultLeadMinutes) }
+    var patientReminderEnabled by remember { mutableStateOf(true) }
+    var patientReminderLeadMinutes by remember { mutableLongStateOf(1440L) }
     var errorMsg by remember { mutableStateOf<String?>(null) }
 
     val dateFormatter = remember { SimpleDateFormat("dd/MM/yyyy", Locale("pt", "BR")) }
+    val dateKeyFormatter = remember { SimpleDateFormat("yyyy-MM-dd", Locale.US) }
+    val timeFormatter = remember { SimpleDateFormat("HH:mm", Locale("pt", "BR")) }
+
+    val conflictMessage = remember(
+        selectedDateMillis,
+        selectedHour,
+        selectedMinute,
+        durationMinutes,
+        existingAppointments,
+        slotBlocks
+    ) {
+        val proposedCal = Calendar.getInstance().apply {
+            timeInMillis = selectedDateMillis
+            set(Calendar.HOUR_OF_DAY, selectedHour)
+            set(Calendar.MINUTE, selectedMinute)
+            set(Calendar.SECOND, 0)
+            set(Calendar.MILLISECOND, 0)
+        }
+        val proposedStart = proposedCal.timeInMillis
+        val proposedEnd = proposedStart + durationMinutes * 60_000L
+        val proposedDateKey = dateKeyFormatter.format(Date(proposedStart))
+
+        val conflictingAppt = existingAppointments.firstOrNull { appt ->
+            if (appt.appointmentStatus.isTerminal) return@firstOrNull false
+            val apptStart = appt.scheduledAtMillis
+            val apptEnd = apptStart + appt.durationMinutes * 60_000L
+            proposedStart < apptEnd && proposedEnd > apptStart
+        }
+        if (conflictingAppt != null) {
+            return@remember "Conflito com consulta de ${conflictingAppt.patientName} às ${timeFormatter.format(Date(conflictingAppt.scheduledAtMillis))}."
+        }
+
+        val conflictingBlock = slotBlocks.firstOrNull { block ->
+            if (block.dateKey != proposedDateKey) return@firstOrNull false
+            val blockCal = Calendar.getInstance().apply {
+                timeInMillis = proposedStart
+                set(Calendar.HOUR_OF_DAY, block.hour.toInt())
+                set(Calendar.MINUTE, block.minute.toInt())
+                set(Calendar.SECOND, 0)
+                set(Calendar.MILLISECOND, 0)
+            }
+            val blockStart = blockCal.timeInMillis
+            val blockEnd = blockStart + block.durationMinutes * 60_000L
+            proposedStart < blockEnd && proposedEnd > blockStart
+        }
+        conflictingBlock?.let {
+            "Horário bloqueado como ocupado (${it.reason.ifBlank { "Indisponível" }})."
+        }
+    }
 
     AlertDialog(
         onDismissRequest = { if (!isBusy) onDismiss() },
@@ -694,7 +776,23 @@ fun ScheduleAppointmentDialog(
                     }
                 }
 
-                Text("Modalidade", style = MaterialTheme.typography.labelMedium)
+                if (conflictMessage != null) {
+                    Surface(
+                        color = StatusDangerBg,
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = conflictMessage,
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.Medium,
+                            color = StatusDanger,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+                        )
+                    }
+                }
+
+                Text("Tipo de Sessão", style = MaterialTheme.typography.labelMedium)
                 Row(
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -722,39 +820,90 @@ fun ScheduleAppointmentDialog(
                 OutlinedTextField(
                     value = notes,
                     onValueChange = { notes = it },
-                    label = { Text("Objetivo / Observações da consulta") },
+                    label = { Text("Notas / Objetivo da consulta") },
+                    placeholder = { Text("Ex.: Reavaliação de TMF e ajuste do plano vocal") },
                     minLines = 2,
                     maxLines = 3,
                     modifier = Modifier.fillMaxWidth()
                 )
 
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(modifier = Modifier.weight(1f)) {
-                        Text("Lembrete Automático", style = MaterialTheme.typography.bodyMedium)
-                        Text(
-                            "Notificar antes da sessão",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Switch(checked = reminderEnabled, onCheckedChange = { reminderEnabled = it })
-                }
-
-                if (reminderEnabled) {
-                    Row(
-                        modifier = Modifier.horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        listOf(30L to "30 min", 60L to "1 hora", 1440L to "24 horas").forEach { (mins, lbl) ->
-                            FilterChip(
-                                selected = reminderLeadMinutes == mins,
-                                onClick = { reminderLeadMinutes = mins },
-                                label = { Text(lbl) }
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Lembrete para a Fonoaudióloga", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "Notificação local antes da consulta",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = reminderEnabled,
+                                onCheckedChange = { reminderEnabled = it },
+                                modifier = Modifier.testTag("switch_therapist_reminder")
                             )
+                        }
+
+                        if (reminderEnabled) {
+                            Row(
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                listOf(30L to "30 min", 60L to "1 hora", 1440L to "24 horas").forEach { (mins, lbl) ->
+                                    FilterChip(
+                                        selected = reminderLeadMinutes == mins,
+                                        onClick = { reminderLeadMinutes = mins },
+                                        label = { Text(lbl) }
+                                    )
+                                }
+                            }
+                        }
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text("Lembrete para Paciente / Resp.", style = MaterialTheme.typography.bodyMedium)
+                                Text(
+                                    "Aviso programado de confirmação",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Switch(
+                                checked = patientReminderEnabled,
+                                onCheckedChange = { patientReminderEnabled = it },
+                                modifier = Modifier.testTag("switch_patient_reminder")
+                            )
+                        }
+
+                        if (patientReminderEnabled) {
+                            Row(
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                listOf(60L to "1 hora", 720L to "12 horas", 1440L to "24 horas").forEach { (mins, lbl) ->
+                                    FilterChip(
+                                        selected = patientReminderLeadMinutes == mins,
+                                        onClick = { patientReminderLeadMinutes = mins },
+                                        label = { Text(lbl) }
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -786,7 +935,9 @@ fun ScheduleAppointmentDialog(
                         sessionType,
                         notes,
                         reminderEnabled,
-                        reminderLeadMinutes
+                        reminderLeadMinutes,
+                        patientReminderEnabled,
+                        patientReminderLeadMinutes
                     )
                 },
                 enabled = !isBusy,
@@ -808,7 +959,6 @@ fun ScheduleAppointmentDialog(
                 TextButton(
                     onClick = {
                         datePickerState.selectedDateMillis?.let { utcMillis ->
-                            // Adjust UTC midnight from DatePicker to local calendar date
                             val utcCal = Calendar.getInstance(java.util.TimeZone.getTimeZone("UTC")).apply {
                                 timeInMillis = utcMillis
                             }
@@ -857,6 +1007,83 @@ fun ScheduleAppointmentDialog(
             }
         )
     }
+}
+
+@Composable
+fun BlockSlotDialog(
+    dateLabel: String,
+    hour: Int,
+    minute: Int,
+    isBusy: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (durationMinutes: Int, reason: String) -> Unit
+) {
+    var reason by remember { mutableStateOf("Horário ocupado") }
+    var durationMinutes by remember { mutableIntStateOf(60) }
+    val presets = remember { listOf("Horário ocupado", "Almoço", "Reunião clínica", "Indisponível") }
+
+    AlertDialog(
+        onDismissRequest = { if (!isBusy) onDismiss() },
+        title = {
+            Column {
+                Text("Marcar Horário como Ocupado", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    text = String.format(Locale("pt", "BR"), "%s • %02d:%02d", dateLabel, hour, minute),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("Motivo rápido", style = MaterialTheme.typography.labelMedium)
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    presets.forEach { preset ->
+                        FilterChip(
+                            selected = reason == preset,
+                            onClick = { reason = preset },
+                            label = { Text(preset) }
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = reason,
+                    onValueChange = { reason = it },
+                    label = { Text("Motivo do bloqueio") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("block_slot_reason_input")
+                )
+                Text("Duração do bloqueio", style = MaterialTheme.typography.labelMedium)
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    listOf(30, 60, 90, 120).forEach { dur ->
+                        FilterChip(
+                            selected = durationMinutes == dur,
+                            onClick = { durationMinutes = dur },
+                            label = { Text("$dur min") }
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = { onConfirm(durationMinutes, reason.ifBlank { "Horário ocupado" }) },
+                enabled = !isBusy,
+                modifier = Modifier.testTag("confirm_block_slot_button")
+            ) {
+                Text("Bloquear Horário")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isBusy) { Text("Cancelar") }
+        }
+    )
 }
 
 @Composable
@@ -945,3 +1172,512 @@ fun EditProfileDialog(
         }
     )
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ExerciseListBuilderDialog(
+    patients: List<Patient>,
+    initialList: CustomExerciseList? = null,
+    preselectedPatient: Patient? = null,
+    isBusy: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (
+        title: String,
+        clinicalObjective: String,
+        patient: Patient?,
+        items: List<ExerciseListItem>,
+        applyToPatientNow: Boolean
+    ) -> Unit
+) {
+    val resolvedInitialPatient = remember(initialList, preselectedPatient, patients) {
+        when {
+            preselectedPatient != null -> preselectedPatient
+            !initialList?.patientId.isNullOrBlank() -> patients.firstOrNull { it.id == initialList?.patientId }
+            else -> null
+        }
+    }
+
+    var title by remember { mutableStateOf(initialList?.title ?: "") }
+    var objective by remember { mutableStateOf(initialList?.clinicalObjective ?: "") }
+    var selectedPatient by remember { mutableStateOf(resolvedInitialPatient) }
+    var patientMenuOpen by remember { mutableStateOf(false) }
+    var items by remember {
+        mutableStateOf(
+            initialList?.items?.takeIf { it.isNotEmpty() }
+                ?: CuratedProtocolPresets.presets.first().items
+        )
+    }
+    var applyNow by remember {
+        mutableStateOf(preselectedPatient != null && initialList == null)
+    }
+
+    // Inline custom exercise composer state
+    var showCustomItemForm by remember { mutableStateOf(false) }
+    var newTitle by remember { mutableStateOf("") }
+    var newCategory by remember { mutableStateOf(ExerciseCategory.AQUECIMENTO) }
+    var newInstructions by remember { mutableStateOf("") }
+    var newDurationText by remember { mutableStateOf("10") }
+    var newFrequencyText by remember { mutableStateOf("5") }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = { if (!isBusy) onDismiss() },
+        title = {
+            Text(
+                text = if (initialList == null) "Gerar Lista Personalizada" else "Editar Lista Personalizada",
+                style = MaterialTheme.typography.titleLarge
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                Text(
+                    text = "Gerar por Protocolo Clínico",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    CuratedProtocolPresets.presets.forEach { preset ->
+                        FilterChip(
+                            selected = false,
+                            onClick = {
+                                if (title.isBlank()) title = preset.defaultTitle
+                                if (objective.isBlank()) objective = preset.objective
+                                items = preset.items
+                                errorMsg = null
+                            },
+                            label = { Text(preset.label) },
+                            modifier = Modifier.testTag("preset_protocol_${preset.id}")
+                        )
+                    }
+                }
+
+                OutlinedTextField(
+                    value = title,
+                    onValueChange = { title = it; errorMsg = null },
+                    label = { Text("Título da lista *") },
+                    placeholder = { Text("Ex.: Treino Vocal Matinal - Semana 1") },
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("exercise_list_title_input")
+                )
+
+                OutlinedTextField(
+                    value = objective,
+                    onValueChange = { objective = it },
+                    label = { Text("Objetivo clínico / Foco") },
+                    placeholder = { Text("Ex.: Reduzir tensão laríngea e elevar TMF") },
+                    minLines = 2,
+                    maxLines = 3,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                ExposedDropdownMenuBox(
+                    expanded = patientMenuOpen,
+                    onExpandedChange = { patientMenuOpen = !patientMenuOpen }
+                ) {
+                    OutlinedTextField(
+                        value = selectedPatient?.fullName ?: "Nenhum (Modelo reutilizável da clínica)",
+                        onValueChange = {},
+                        readOnly = true,
+                        label = { Text("Vincular a paciente (opcional)") },
+                        trailingIcon = {
+                            ExposedDropdownMenuDefaults.TrailingIcon(expanded = patientMenuOpen)
+                        },
+                        modifier = Modifier
+                            .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                            .fillMaxWidth()
+                    )
+                    ExposedDropdownMenu(
+                        expanded = patientMenuOpen,
+                        onDismissRequest = { patientMenuOpen = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text("Nenhum (Modelo reutilizável)") },
+                            onClick = {
+                                selectedPatient = null
+                                applyNow = false
+                                patientMenuOpen = false
+                            }
+                        )
+                        patients.forEach { pat ->
+                            DropdownMenuItem(
+                                text = { Text("${pat.fullName} (${pat.clinicalFocus})") },
+                                onClick = {
+                                    selectedPatient = pat
+                                    patientMenuOpen = false
+                                }
+                            )
+                        }
+                    }
+                }
+
+                if (selectedPatient != null) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text("Aplicar ao plano de ${selectedPatient?.fullName}", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                "Prescreve todos os exercícios da lista no prontuário",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Switch(checked = applyNow, onCheckedChange = { applyNow = it })
+                    }
+                }
+
+                Text(
+                    text = "Adicionar exercício rápido",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.primary
+                )
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    CuratedVoiceExerciseTemplates.templates.forEach { tpl ->
+                        FilterChip(
+                            selected = false,
+                            onClick = {
+                                if (items.size < 20) {
+                                    items = items + ExerciseListItem(
+                                        title = tpl.title,
+                                        category = tpl.category.name,
+                                        instructions = tpl.instructions,
+                                        durationMinutes = tpl.targetDurationMinutes.toLong(),
+                                        frequencyPerWeek = tpl.frequencyPerWeek.toLong()
+                                    )
+                                    errorMsg = null
+                                }
+                            },
+                            label = { Text("+ ${tpl.title.substringBefore(" (")}") }
+                        )
+                    }
+                }
+
+                OutlinedButton(
+                    onClick = { showCustomItemForm = !showCustomItemForm },
+                    modifier = Modifier.fillMaxWidth().testTag("toggle_custom_exercise_item")
+                ) {
+                    Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (showCustomItemForm) "Ocultar formulário personalizado" else "Criar exercício personalizado na lista")
+                }
+
+                if (showCustomItemForm) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(12.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            OutlinedTextField(
+                                value = newTitle,
+                                onValueChange = { newTitle = it },
+                                label = { Text("Nome do exercício *") },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth().testTag("custom_list_item_title")
+                            )
+                            Row(
+                                modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                ExerciseCategory.entries.forEach { cat ->
+                                    FilterChip(
+                                        selected = newCategory == cat,
+                                        onClick = { newCategory = cat },
+                                        label = { Text(cat.label) }
+                                    )
+                                }
+                            }
+                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                OutlinedTextField(
+                                    value = newDurationText,
+                                    onValueChange = { newDurationText = it.filter { c -> c.isDigit() } },
+                                    label = { Text("Minutos") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                                OutlinedTextField(
+                                    value = newFrequencyText,
+                                    onValueChange = { newFrequencyText = it.filter { c -> c.isDigit() } },
+                                    label = { Text("Vezes/sem") },
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            OutlinedTextField(
+                                value = newInstructions,
+                                onValueChange = { newInstructions = it },
+                                label = { Text("Instruções *") },
+                                minLines = 2,
+                                maxLines = 3,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            FilledTonalButton(
+                                onClick = {
+                                    if (newTitle.trim().length < 2) {
+                                        errorMsg = "Informe o nome do exercício personalizado."
+                                        return@FilledTonalButton
+                                    }
+                                    if (items.size < 20) {
+                                        items = items + ExerciseListItem(
+                                            title = newTitle.trim(),
+                                            category = newCategory.name,
+                                            instructions = newInstructions.trim().ifBlank { "Executar conforme orientação clínica." },
+                                            durationMinutes = (newDurationText.toLongOrNull() ?: 10L).coerceIn(1L, 120L),
+                                            frequencyPerWeek = (newFrequencyText.toLongOrNull() ?: 5L).coerceIn(1L, 21L)
+                                        )
+                                        newTitle = ""
+                                        newInstructions = ""
+                                        showCustomItemForm = false
+                                        errorMsg = null
+                                    }
+                                },
+                                modifier = Modifier.fillMaxWidth().testTag("add_custom_item_btn")
+                            ) {
+                                Text("Adicionar à Lista")
+                            }
+                        }
+                    }
+                }
+
+                Text(
+                    text = "Exercícios na Lista (${items.size})",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+
+                items.forEachIndexed { idx, item ->
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                        shape = RoundedCornerShape(10.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "${idx + 1}. ${item.title}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                                Text(
+                                    text = "${item.exerciseCategory.label} • ${item.durationMinutes} min • ${item.frequencyPerWeek}x/sem",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                            }
+                            if (idx > 0) {
+                                IconButton(
+                                    onClick = {
+                                        val mutable = items.toMutableList()
+                                        val moved = mutable.removeAt(idx)
+                                        mutable.add(idx - 1, moved)
+                                        items = mutable
+                                    }
+                                ) {
+                                    Icon(Icons.Rounded.ArrowUpward, contentDescription = "Subir exercício", modifier = Modifier.size(16.dp))
+                                }
+                            }
+                            if (idx < items.lastIndex) {
+                                IconButton(
+                                    onClick = {
+                                        val mutable = items.toMutableList()
+                                        val moved = mutable.removeAt(idx)
+                                        mutable.add(idx + 1, moved)
+                                        items = mutable
+                                    }
+                                ) {
+                                    Icon(Icons.Rounded.ArrowDownward, contentDescription = "Descer exercício", modifier = Modifier.size(16.dp))
+                                }
+                            }
+                            IconButton(
+                                onClick = {
+                                    items = items.filterIndexed { i, _ -> i != idx }
+                                }
+                            ) {
+                                Icon(
+                                    Icons.Rounded.DeleteOutline,
+                                    contentDescription = "Remover exercício da lista",
+                                    tint = MaterialTheme.colorScheme.error,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+                }
+
+                errorMsg?.let {
+                    Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    when {
+                        title.trim().length < 2 -> errorMsg = "Informe o título da lista."
+                        items.isEmpty() -> errorMsg = "Adicione ao menos 1 exercício à lista."
+                        else -> onConfirm(title, objective, selectedPatient, items, applyNow)
+                    }
+                },
+                enabled = !isBusy,
+                modifier = Modifier.testTag("save_exercise_list_button")
+            ) {
+                Text(if (isBusy) "Salvando..." else "Salvar Lista")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isBusy) { Text("Cancelar") }
+        }
+    )
+}
+
+@Composable
+fun PickPatientForListDialog(
+    listTitle: String,
+    patients: List<Patient>,
+    isBusy: Boolean,
+    onDismiss: () -> Unit,
+    onSelectPatient: (Patient) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = { if (!isBusy) onDismiss() },
+        title = {
+            Column {
+                Text("Aplicar Lista a Paciente", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    text = listTitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (patients.isEmpty()) {
+                    Text(
+                        text = "Cadastre um paciente primeiro para aplicar esta lista.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                } else {
+                    patients.forEach { pat ->
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(enabled = !isBusy) { onSelectPatient(pat) }
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(pat.fullName, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = "${pat.ageYears} anos • ${pat.clinicalFocus}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isBusy) { Text("Fechar") }
+        }
+    )
+}
+
+@Composable
+fun PickListForPatientDialog(
+    patientName: String,
+    lists: List<CustomExerciseList>,
+    isBusy: Boolean,
+    onDismiss: () -> Unit,
+    onSelectList: (CustomExerciseList) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = { if (!isBusy) onDismiss() },
+        title = {
+            Column {
+                Text("Aplicar Lista Personalizada", style = MaterialTheme.typography.titleLarge)
+                Text(
+                    text = "Paciente: $patientName",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.primary
+                )
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                if (lists.isEmpty()) {
+                    Text(
+                        text = "Você ainda não criou nenhuma lista personalizada.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                } else {
+                    lists.forEach { list ->
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                            shape = RoundedCornerShape(12.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable(enabled = !isBusy) { onSelectList(list) }
+                        ) {
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(list.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                                Text(
+                                    text = "${list.items.size} exercício(s) • ${list.totalWeeklyMinutes} min/sem",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.primary
+                                )
+                                if (list.clinicalObjective.isNotBlank()) {
+                                    Text(
+                                        text = list.clinicalObjective,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isBusy) { Text("Fechar") }
+        }
+    )
+}
+

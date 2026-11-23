@@ -110,7 +110,46 @@ service cloud.firestore {
              (!('notes' in data) || (data.notes is string && data.notes.size() <= 1000)) &&
              data.reminderEnabled is bool &&
              data.reminderLeadMinutes is int && data.reminderLeadMinutes >= 5 && data.reminderLeadMinutes <= 10080 &&
+             (!('patientReminderEnabled' in data) || data.patientReminderEnabled is bool) &&
+             (!('patientReminderLeadMinutes' in data) || (data.patientReminderLeadMinutes is int && data.patientReminderLeadMinutes >= 5 && data.patientReminderLeadMinutes <= 10080)) &&
              data.reminderSentMillis is int && data.reminderSentMillis >= 0;
+    }
+
+    function isValidSlotBlock(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.dateKey is string && data.dateKey.size() == 10 && data.dateKey.matches('^\\d{4}-\\d{2}-\\d{2}$') &&
+             data.hour is int && data.hour >= 0 && data.hour <= 23 &&
+             data.minute is int && data.minute >= 0 && data.minute <= 59 &&
+             data.durationMinutes is int && data.durationMinutes >= 15 && data.durationMinutes <= 240 &&
+             (!('reason' in data) || (data.reason is string && data.reason.size() <= 120));
+    }
+
+    function isValidExerciseList(data) {
+      return data.userId is string && data.userId.size() >= 1 && data.userId.size() <= 128 &&
+             data.title is string && data.title.size() >= 2 && data.title.size() <= 120 &&
+             (!('clinicalObjective' in data) || (data.clinicalObjective is string && data.clinicalObjective.size() <= 400)) &&
+             (!('patientId' in data) || (data.patientId is string && data.patientId.size() <= 128)) &&
+             (!('patientName' in data) || (data.patientName is string && data.patientName.size() <= 100)) &&
+             data.items is list && data.items.size() >= 1 && data.items.size() <= 20;
+    }
+
+    function isValidPatientAccessCode(data, codeId) {
+      return data.code is string && data.code == codeId &&
+             data.code.size() >= 6 && data.code.size() <= 16 &&
+             data.code.matches('^[A-Z0-9]+$') &&
+             data.therapistId is string && data.therapistId.size() >= 1 && data.therapistId.size() <= 128 &&
+             data.therapistName is string && data.therapistName.size() >= 1 && data.therapistName.size() <= 100 &&
+             data.clinicName is string && data.clinicName.size() <= 100 &&
+             isValidId(data.patientId) &&
+             data.patientName is string && data.patientName.size() >= 1 && data.patientName.size() <= 100 &&
+             data.clinicalFocus is string && data.clinicalFocus.size() <= 120 &&
+             data.weeklyGoalMinutes is int && data.weeklyGoalMinutes >= 10 && data.weeklyGoalMinutes <= 1000 &&
+             data.active is bool &&
+             data.redeemedByUid is string && data.redeemedByUid.size() <= 128 &&
+             data.redeemedAtMillis is int && data.redeemedAtMillis >= 0 &&
+             data.exercisesSnapshot is list && data.exercisesSnapshot.size() <= 40 &&
+             data.nextAppointmentSummary is string && data.nextAppointmentSummary.size() <= 200 &&
+             data.recentProgressSummary is string && data.recentProgressSummary.size() <= 300;
     }
 
     // --- COLLECTIONS ---
@@ -277,8 +316,9 @@ service cloud.firestore {
                          incoming().keys().hasOnly([
                            'userId', 'patientId', 'patientName', 'guardianName', 'guardianPhone',
                            'scheduledAtMillis', 'durationMinutes', 'sessionType', 'status',
-                           'notes', 'reminderEnabled', 'reminderLeadMinutes', 'reminderSentMillis',
-                           'createdAt', 'updatedAt'
+                           'notes', 'reminderEnabled', 'reminderLeadMinutes',
+                           'patientReminderEnabled', 'patientReminderLeadMinutes',
+                           'reminderSentMillis', 'createdAt', 'updatedAt'
                          ]) &&
                          incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
                          incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
@@ -293,7 +333,6 @@ service cloud.firestore {
                          incoming().createdAt == existing().createdAt &&
                          incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
                          (
-                           // Terminal state lock: CONCLUIDA or CANCELADA appointments can only update clinical notes or reminderSentMillis
                            (
                              (existing().status == 'CONCLUIDA' || existing().status == 'CANCELADA') &&
                              incoming().diff(existing()).affectedKeys().hasOnly(['notes', 'updatedAt'])
@@ -302,11 +341,14 @@ service cloud.firestore {
                              !(existing().status == 'CONCLUIDA' || existing().status == 'CANCELADA') &&
                              (
                                incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt']) ||
+                               incoming().diff(existing()).affectedKeys().hasOnly(['notes', 'updatedAt']) ||
                                incoming().diff(existing()).affectedKeys().hasOnly(['reminderSentMillis', 'updatedAt']) ||
                                incoming().diff(existing()).affectedKeys().hasOnly([
                                  'patientName', 'guardianName', 'guardianPhone', 'scheduledAtMillis',
                                  'durationMinutes', 'sessionType', 'status', 'notes',
-                                 'reminderEnabled', 'reminderLeadMinutes', 'reminderSentMillis', 'updatedAt'
+                                 'reminderEnabled', 'reminderLeadMinutes',
+                                 'patientReminderEnabled', 'patientReminderLeadMinutes',
+                                 'reminderSentMillis', 'updatedAt'
                                ])
                              )
                            )
@@ -314,6 +356,142 @@ service cloud.firestore {
 
         allow delete: if isOwner(userId) && isValidId(appointmentId);
       }
+
+      // Subcollection: Blocked / Occupied Time Slots
+      match /slotBlocks/{blockId} {
+        allow get: if isOwner(userId) && isValidId(blockId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(blockId) &&
+                         incoming().userId == userId &&
+                         incoming().keys().hasAll([
+                           'userId', 'dateKey', 'hour', 'minute', 'durationMinutes', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'dateKey', 'hour', 'minute', 'durationMinutes', 'reason', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         isValidSlotBlock(incoming());
+
+        allow update: if isOwner(userId) &&
+                         isValidId(blockId) &&
+                         isValidSlotBlock(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['reason', 'durationMinutes', 'updatedAt']);
+
+        allow delete: if isOwner(userId) && isValidId(blockId);
+      }
+
+      // Subcollection: Personalized Voice Exercise Lists
+      match /exerciseLists/{listId} {
+        allow get: if isOwner(userId) && isValidId(listId);
+        allow list: if isOwner(userId);
+
+        allow create: if isOwner(userId) &&
+                         isValidId(listId) &&
+                         incoming().userId == userId &&
+                         incoming().keys().hasAll([
+                           'userId', 'title', 'items', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().keys().hasOnly([
+                           'userId', 'title', 'clinicalObjective', 'patientId', 'patientName',
+                           'items', 'createdAt', 'updatedAt'
+                         ]) &&
+                         incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         isValidExerciseList(incoming()) &&
+                         (!('patientId' in incoming()) || incoming().patientId == '' ||
+                          exists(/databases/$(database)/documents/users/$(userId)/patients/$(incoming().patientId)));
+
+        allow update: if isOwner(userId) &&
+                         isValidId(listId) &&
+                         isValidExerciseList(incoming()) &&
+                         incoming().userId == existing().userId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'title', 'clinicalObjective', 'patientId', 'patientName', 'items', 'updatedAt'
+                         ]) &&
+                         (!('patientId' in incoming()) || incoming().patientId == '' ||
+                          exists(/databases/$(database)/documents/users/$(userId)/patients/$(incoming().patientId)));
+
+        allow delete: if isOwner(userId) && isValidId(listId);
+      }
+    }
+
+    // Top-level Collection: Patient Access Codes generated by the speech therapist
+    match /patientAccessCodes/{codeId} {
+      allow get: if isSignedIn() &&
+                    resource != null &&
+                    (
+                      resource.data.therapistId == request.auth.uid ||
+                      (
+                        resource.data.active == true &&
+                        (resource.data.redeemedByUid == '' || resource.data.redeemedByUid == request.auth.uid)
+                      )
+                    );
+
+      allow list: if isSignedIn() && resource.data.therapistId == request.auth.uid;
+
+      allow create: if isSignedIn() &&
+                       incoming().therapistId == request.auth.uid &&
+                       incoming().keys().hasAll([
+                         'code', 'therapistId', 'therapistName', 'clinicName',
+                         'patientId', 'patientName', 'clinicalFocus', 'weeklyGoalMinutes',
+                         'active', 'redeemedByUid', 'redeemedAtMillis', 'exercisesSnapshot',
+                         'nextAppointmentSummary', 'recentProgressSummary', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().keys().hasOnly([
+                         'code', 'therapistId', 'therapistName', 'clinicName',
+                         'patientId', 'patientName', 'clinicalFocus', 'weeklyGoalMinutes',
+                         'active', 'redeemedByUid', 'redeemedAtMillis', 'exercisesSnapshot',
+                         'nextAppointmentSummary', 'recentProgressSummary', 'createdAt', 'updatedAt'
+                       ]) &&
+                       incoming().active == true &&
+                       incoming().redeemedByUid == '' &&
+                       incoming().redeemedAtMillis == 0 &&
+                       incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
+                       incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                       isValidPatientAccessCode(incoming(), codeId) &&
+                       exists(/databases/$(database)/documents/users/$(request.auth.uid)/patients/$(incoming().patientId));
+
+      allow update: if isSignedIn() && (
+                       (
+                         existing().therapistId == request.auth.uid &&
+                         isValidPatientAccessCode(incoming(), codeId) &&
+                         incoming().therapistId == existing().therapistId &&
+                         incoming().patientId == existing().patientId &&
+                         incoming().code == existing().code &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'therapistName', 'clinicName', 'patientName', 'clinicalFocus',
+                           'weeklyGoalMinutes', 'active', 'redeemedByUid', 'redeemedAtMillis',
+                           'exercisesSnapshot', 'nextAppointmentSummary', 'recentProgressSummary', 'updatedAt'
+                         ])
+                       ) ||
+                       (
+                         existing().active == true &&
+                         (existing().redeemedByUid == '' || existing().redeemedByUid == request.auth.uid) &&
+                         incoming().therapistId == existing().therapistId &&
+                         incoming().patientId == existing().patientId &&
+                         incoming().code == existing().code &&
+                         incoming().active == existing().active &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().redeemedByUid == request.auth.uid &&
+                         incoming().redeemedAtMillis is int && incoming().redeemedAtMillis > 0 &&
+                         incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
+                         incoming().diff(existing()).affectedKeys().hasOnly([
+                           'redeemedByUid', 'redeemedAtMillis', 'updatedAt'
+                         ])
+                       )
+                     );
+
+      allow delete: if isSignedIn() && existing().therapistId == request.auth.uid;
     }
   }
 }

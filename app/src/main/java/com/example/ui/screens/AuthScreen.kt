@@ -58,14 +58,21 @@ import com.example.R
 import com.example.auth.attemptAutoSignIn
 import com.example.auth.onGoogleSignInClicked
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
+import androidx.compose.material.icons.rounded.Badge
+import androidx.compose.material.icons.rounded.VpnKey
+import com.example.data.AppUserRole
+
 @Composable
 fun AuthScreen(
-    onAuthSuccess: () -> Unit
+    onAuthSuccess: (AppUserRole) -> Unit
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val credentialManager = remember { CredentialManager.create(context) }
 
+    var selectedRole by remember { mutableStateOf(AppUserRole.THERAPIST) }
     var isAutoSigningIn by remember { mutableStateOf(true) }
     var isButtonLoading by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -76,7 +83,7 @@ fun AuthScreen(
             credentialManager = credentialManager,
             onAuthSuccess = {
                 isAutoSigningIn = false
-                onAuthSuccess()
+                onAuthSuccess(AppUserRole.NONE)
             },
             onUnauthenticated = {
                 isAutoSigningIn = false
@@ -203,9 +210,62 @@ fun AuthScreen(
                 modifier = Modifier
                     .widthIn(max = 520.dp)
                     .fillMaxWidth()
-                    .padding(top = 24.dp, bottom = 8.dp),
+                    .padding(top = 20.dp, bottom = 8.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                Text(
+                    text = "Como você deseja acessar?",
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onBackground,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(bottom = 10.dp)
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    RoleOptionCard(
+                        title = "Sou Fonoaudióloga",
+                        subtitle = "Prontuários, PDF e agenda",
+                        icon = Icons.Rounded.Badge,
+                        selected = selectedRole == AppUserRole.THERAPIST,
+                        onClick = { selectedRole = AppUserRole.THERAPIST },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("role_therapist_card")
+                    )
+                    RoleOptionCard(
+                        title = "Sou Paciente",
+                        subtitle = "Acesso via código clínico",
+                        icon = Icons.Rounded.VpnKey,
+                        selected = selectedRole == AppUserRole.PATIENT,
+                        onClick = { selectedRole = AppUserRole.PATIENT },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("role_patient_card")
+                    )
+                }
+
+                if (selectedRole == AppUserRole.PATIENT) {
+                    Spacer(modifier = Modifier.height(10.dp))
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.7f),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Text(
+                            text = "O paciente só terá acesso aos exercícios após inserir o código gerado pela fonoaudióloga.",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp)
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
                 errorMessage?.let { msg ->
                     Surface(
                         color = MaterialTheme.colorScheme.errorContainer,
@@ -232,7 +292,7 @@ fun AuthScreen(
                             credentialManager = credentialManager,
                             onAuthSuccess = {
                                 isButtonLoading = false
-                                onAuthSuccess()
+                                onAuthSuccess(selectedRole)
                             },
                             onAuthError = { msg ->
                                 isButtonLoading = false
@@ -267,7 +327,11 @@ fun AuthScreen(
                         )
                     } else {
                         Text(
-                            text = stringResource(R.string.sign_in_google),
+                            text = if (selectedRole == AppUserRole.PATIENT) {
+                                "Continuar como Paciente (Google)"
+                            } else {
+                                stringResource(R.string.sign_in_google)
+                            },
                             style = MaterialTheme.typography.labelLarge
                         )
                     }
@@ -287,12 +351,69 @@ fun AuthScreen(
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = "Acesso seguro e isolado por conta profissional",
+                        text = if (selectedRole == AppUserRole.PATIENT) {
+                            "Login Google + validação obrigatória por código clínico"
+                        } else {
+                            "Acesso seguro e isolado por conta profissional"
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun RoleOptionCard(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    selected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        color = if (selected) {
+            MaterialTheme.colorScheme.primaryContainer
+        } else {
+            MaterialTheme.colorScheme.surface
+        },
+        shape = RoundedCornerShape(16.dp),
+        border = BorderStroke(
+            width = if (selected) 2.dp else 1.dp,
+            color = if (selected) {
+                MaterialTheme.colorScheme.primary
+            } else {
+                MaterialTheme.colorScheme.outlineVariant
+            }
+        ),
+        modifier = modifier.clickable(onClick = onClick)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(22.dp)
+            )
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold,
+                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.bodySmall,
+                color = if (selected) MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.85f) else MaterialTheme.colorScheme.onSurfaceVariant
+            )
         }
     }
 }

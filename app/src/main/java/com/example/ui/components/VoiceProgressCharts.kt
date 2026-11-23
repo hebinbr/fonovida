@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -29,7 +30,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
@@ -41,6 +44,11 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.example.data.model.EvolutionSession
+import com.example.data.model.ExerciseCategory
+import com.example.ui.theme.StatusDanger
+import com.example.ui.theme.StatusDangerBg
+import com.example.ui.theme.StatusSuccess
+import com.example.ui.theme.StatusSuccessBg
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -52,7 +60,7 @@ fun VoiceEvolutionChartCard(
     modifier: Modifier = Modifier
 ) {
     val ordered = remember(sessions) {
-        sessions.sortedBy { it.sessionDateMillis }.takeLast(10)
+        sessions.sortedBy { it.sessionDateMillis }.takeLast(12)
     }
     var selectedIndex by remember(ordered.size) {
         mutableIntStateOf((ordered.size - 1).coerceAtLeast(0))
@@ -60,6 +68,7 @@ fun VoiceEvolutionChartCard(
 
     val clarityColor = MaterialTheme.colorScheme.primary
     val stabilityColor = MaterialTheme.colorScheme.secondary
+    val comfortColor = MaterialTheme.colorScheme.tertiary
     val gridColor = MaterialTheme.colorScheme.outlineVariant
     val surfaceColor = MaterialTheme.colorScheme.surface
 
@@ -89,9 +98,10 @@ fun VoiceEvolutionChartCard(
                     )
                 }
 
-                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                    LegendDot(color = clarityColor, label = "Clareza")
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    LegendDot(color = clarityColor, label = "Clar.")
                     LegendDot(color = stabilityColor, label = "Estab.")
+                    LegendDot(color = comfortColor, label = "Conf.")
                 }
             }
 
@@ -142,22 +152,10 @@ fun VoiceEvolutionChartCard(
                                 maxLines = 1
                             )
                         }
-                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            ScorePill(
-                                label = "Clar.",
-                                value = "${selectedSession.vocalClarityScore}%",
-                                color = clarityColor
-                            )
-                            ScorePill(
-                                label = "Estab.",
-                                value = "${selectedSession.stabilityScore}%",
-                                color = stabilityColor
-                            )
-                            ScorePill(
-                                label = "TMF",
-                                value = String.format(Locale("pt", "BR"), "%.1fs", selectedSession.tmfSeconds),
-                                color = MaterialTheme.colorScheme.tertiary
-                            )
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            ScorePill("Clar.", "${selectedSession.vocalClarityScore}%", clarityColor)
+                            ScorePill("Estab.", "${selectedSession.stabilityScore}%", stabilityColor)
+                            ScorePill("Conf.", "${selectedSession.comfortScore}%", comfortColor)
                         }
                     }
                 }
@@ -167,11 +165,11 @@ fun VoiceEvolutionChartCard(
                 Canvas(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .height(165.dp)
+                        .height(170.dp)
                         .pointerInput(ordered) {
                             detectTapGestures { offset ->
-                                val leftPad = 36.dp.toPx()
-                                val rightPad = 14.dp.toPx()
+                                val leftPad = 24.dp.toPx()
+                                val rightPad = 12.dp.toPx()
                                 val plotW = (size.width - leftPad - rightPad).coerceAtLeast(1f)
                                 if (ordered.size == 1) {
                                     selectedIndex = 0
@@ -204,17 +202,38 @@ fun VoiceEvolutionChartCard(
                         )
                     }
 
-                    val clarityPts = ordered.mapIndexed { idx, item ->
-                        val x = if (ordered.size == 1) leftPad + plotW / 2f
-                        else leftPad + (idx.toFloat() / (ordered.size - 1)) * plotW
-                        val y = topPad + plotH * (1f - (item.vocalClarityScore.coerceIn(0, 100) / 100f))
-                        Offset(x, y)
-                    }
-                    val stabilityPts = ordered.mapIndexed { idx, item ->
-                        val x = if (ordered.size == 1) leftPad + plotW / 2f
-                        else leftPad + (idx.toFloat() / (ordered.size - 1)) * plotW
-                        val y = topPad + plotH * (1f - (item.stabilityScore.coerceIn(0, 100) / 100f))
-                        Offset(x, y)
+                    fun buildPoints(extract: (EvolutionSession) -> Long): List<Offset> =
+                        ordered.mapIndexed { idx, item ->
+                            val x = if (ordered.size == 1) leftPad + plotW / 2f
+                            else leftPad + (idx.toFloat() / (ordered.size - 1)) * plotW
+                            val y = topPad + plotH * (1f - (extract(item).coerceIn(0, 100) / 100f))
+                            Offset(x, y)
+                        }
+
+                    val clarityPts = buildPoints { it.vocalClarityScore }
+                    val stabilityPts = buildPoints { it.stabilityScore }
+                    val comfortPts = buildPoints { it.comfortScore }
+
+                    fun drawSmoothCurve(pts: List<Offset>, color: Color, widthDp: Float) {
+                        if (pts.size <= 1) return
+                        val path = Path().apply {
+                            moveTo(pts.first().x, pts.first().y)
+                            for (i in 0 until pts.lastIndex) {
+                                val p0 = pts[i]
+                                val p1 = pts[i + 1]
+                                val cx = (p0.x + p1.x) / 2f
+                                cubicTo(cx, p0.y, cx, p1.y, p1.x, p1.y)
+                            }
+                        }
+                        drawPath(
+                            path = path,
+                            color = color,
+                            style = Stroke(
+                                width = widthDp.dp.toPx(),
+                                cap = StrokeCap.Round,
+                                join = StrokeJoin.Round
+                            )
+                        )
                     }
 
                     if (clarityPts.size > 1) {
@@ -235,47 +254,11 @@ fun VoiceEvolutionChartCard(
                                 endY = topPad + plotH
                             )
                         )
-
-                        val stabPath = Path().apply {
-                            moveTo(stabilityPts.first().x, stabilityPts.first().y)
-                            for (i in 0 until stabilityPts.lastIndex) {
-                                val p0 = stabilityPts[i]
-                                val p1 = stabilityPts[i + 1]
-                                val cx = (p0.x + p1.x) / 2f
-                                cubicTo(cx, p0.y, cx, p1.y, p1.x, p1.y)
-                            }
-                        }
-                        drawPath(
-                            path = stabPath,
-                            color = stabilityColor,
-                            style = Stroke(
-                                width = 2.4.dp.toPx(),
-                                cap = StrokeCap.Round,
-                                join = StrokeJoin.Round
-                            )
-                        )
-
-                        val clarPath = Path().apply {
-                            moveTo(clarityPts.first().x, clarityPts.first().y)
-                            for (i in 0 until clarityPts.lastIndex) {
-                                val p0 = clarityPts[i]
-                                val p1 = clarityPts[i + 1]
-                                val cx = (p0.x + p1.x) / 2f
-                                cubicTo(cx, p0.y, cx, p1.y, p1.x, p1.y)
-                            }
-                        }
-                        drawPath(
-                            path = clarPath,
-                            color = clarityColor,
-                            style = Stroke(
-                                width = 3.2.dp.toPx(),
-                                cap = StrokeCap.Round,
-                                join = StrokeJoin.Round
-                            )
-                        )
+                        drawSmoothCurve(comfortPts, comfortColor, 2.0f)
+                        drawSmoothCurve(stabilityPts, stabilityColor, 2.4f)
+                        drawSmoothCurve(clarityPts, clarityColor, 3.2f)
                     }
 
-                    // Selected vertical guide
                     val selX = clarityPts[selectedIndex.coerceIn(0, clarityPts.lastIndex)].x
                     drawLine(
                         color = clarityColor.copy(alpha = 0.35f),
@@ -284,36 +267,27 @@ fun VoiceEvolutionChartCard(
                         strokeWidth = 1.5.dp.toPx()
                     )
 
-                    stabilityPts.forEachIndexed { idx, pt ->
-                        val isSel = idx == selectedIndex
-                        drawCircle(
-                            color = surfaceColor,
-                            radius = if (isSel) 5.5.dp.toPx() else 4.dp.toPx(),
-                            center = pt
-                        )
-                        drawCircle(
-                            color = stabilityColor,
-                            radius = if (isSel) 4.dp.toPx() else 2.8.dp.toPx(),
-                            center = pt
-                        )
-                    }
-
-                    clarityPts.forEachIndexed { idx, pt ->
-                        val isSel = idx == selectedIndex
-                        drawCircle(
-                            color = surfaceColor,
-                            radius = if (isSel) 7.dp.toPx() else 4.5.dp.toPx(),
-                            center = pt
-                        )
-                        drawCircle(
-                            color = clarityColor,
-                            radius = if (isSel) 5.dp.toPx() else 3.2.dp.toPx(),
-                            center = pt
-                        )
+                    listOf(
+                        comfortPts to comfortColor,
+                        stabilityPts to stabilityColor,
+                        clarityPts to clarityColor
+                    ).forEach { (pts, col) ->
+                        pts.forEachIndexed { idx, pt ->
+                            val isSel = idx == selectedIndex
+                            drawCircle(
+                                color = surfaceColor,
+                                radius = if (isSel) 5.5.dp.toPx() else 3.8.dp.toPx(),
+                                center = pt
+                            )
+                            drawCircle(
+                                color = col,
+                                radius = if (isSel) 4.2.dp.toPx() else 2.8.dp.toPx(),
+                                center = pt
+                            )
+                        }
                     }
                 }
 
-                // Bottom date labels
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -332,6 +306,299 @@ fun VoiceEvolutionChartCard(
                         )
                     }
                 }
+            }
+        }
+    }
+}
+
+@Composable
+fun TmfProgressionChartCard(
+    sessions: List<EvolutionSession>,
+    modifier: Modifier = Modifier
+) {
+    val ordered = remember(sessions) {
+        sessions.sortedBy { it.sessionDateMillis }.takeLast(10)
+    }
+    val barColor = MaterialTheme.colorScheme.tertiary
+    val peakColor = MaterialTheme.colorScheme.primary
+    val gridColor = MaterialTheme.colorScheme.outlineVariant
+    val maxTmf = remember(ordered) {
+        (ordered.maxOfOrNull { it.tmfSeconds } ?: 15.0).coerceAtLeast(10.0)
+    }
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(modifier = Modifier.padding(18.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Text(
+                        text = "Tempo Máximo de Fonação (TMF)",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                    Text(
+                        text = "Sustentação em segundos por sessão",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                if (ordered.isNotEmpty()) {
+                    val best = ordered.maxOf { it.tmfSeconds }
+                    Surface(
+                        color = MaterialTheme.colorScheme.tertiaryContainer,
+                        shape = RoundedCornerShape(50)
+                    ) {
+                        Text(
+                            text = String.format(Locale("pt", "BR"), "Pico: %.1fs", best),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            if (ordered.isEmpty()) {
+                Text(
+                    text = "Nenhuma medição de TMF registrada no período.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                Canvas(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(130.dp)
+                ) {
+                    val leftPad = 8.dp.toPx()
+                    val rightPad = 8.dp.toPx()
+                    val topPad = 10.dp.toPx()
+                    val bottomPad = 8.dp.toPx()
+                    val plotW = (size.width - leftPad - rightPad).coerceAtLeast(1f)
+                    val plotH = (size.height - topPad - bottomPad).coerceAtLeast(1f)
+
+                    drawLine(
+                        color = gridColor,
+                        start = Offset(leftPad, topPad + plotH),
+                        end = Offset(size.width - rightPad, topPad + plotH),
+                        strokeWidth = 1.dp.toPx()
+                    )
+
+                    val slotW = plotW / ordered.size.coerceAtLeast(1)
+                    val barW = (slotW * 0.56f).coerceIn(10.dp.toPx(), 28.dp.toPx())
+                    val bestVal = ordered.maxOf { it.tmfSeconds }
+
+                    ordered.forEachIndexed { idx, item ->
+                        val frac = (item.tmfSeconds / maxTmf).toFloat().coerceIn(0.05f, 1f)
+                        val bh = plotH * frac
+                        val bx = leftPad + idx * slotW + (slotW - barW) / 2f
+                        val by = topPad + (plotH - bh)
+                        val isPeak = item.tmfSeconds == bestVal
+                        drawRoundRect(
+                            color = if (isPeak) peakColor else barColor.copy(alpha = 0.72f),
+                            topLeft = Offset(bx, by),
+                            size = Size(barW, bh),
+                            cornerRadius = CornerRadius(6.dp.toPx(), 6.dp.toPx())
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    ordered.forEach { s ->
+                        Text(
+                            text = String.format(Locale("pt", "BR"), "%.1fs", s.tmfSeconds),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CategoryPerformanceCard(
+    sessions: List<EvolutionSession>,
+    modifier: Modifier = Modifier
+) {
+    val breakdown = remember(sessions) {
+        ExerciseCategory.entries.mapNotNull { cat ->
+            val items = sessions.filter { it.exerciseCategory == cat }
+            if (items.isEmpty()) null
+            else Triple(
+                cat,
+                items.size to items.sumOf { it.durationMinutes }.toInt(),
+                items.map { it.compositeScore }.average().toInt()
+            )
+        }
+    }
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(18.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Text(
+                text = "Desempenho por Categoria Vocal",
+                style = MaterialTheme.typography.titleMedium
+            )
+            if (breakdown.isEmpty()) {
+                Text(
+                    text = "Sem sessões neste período para agrupar por categoria.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                breakdown.forEach { (cat, countAndMin, avgScore) ->
+                    val (count, minutes) = countAndMin
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Text(
+                                text = cat.label,
+                                style = MaterialTheme.typography.labelLarge
+                            )
+                            Text(
+                                text = "$avgScore% • $count sessões ($minutes min)",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        LinearProgressIndicator(
+                            progress = { (avgScore / 100f).coerceIn(0f, 1f) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(7.dp)
+                                .clip(RoundedCornerShape(50))
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ProgressDeltaCard(
+    sessions: List<EvolutionSession>,
+    modifier: Modifier = Modifier
+) {
+    val ordered = remember(sessions) { sessions.sortedBy { it.sessionDateMillis } }
+    val first = ordered.firstOrNull()
+    val last = ordered.lastOrNull()
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "Comparativo Inicial vs. Atual",
+                style = MaterialTheme.typography.titleMedium
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            if (first == null || last == null) {
+                Text(
+                    text = "Registre sessões para acompanhar o ganho clínico ao longo do tempo.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else {
+                val clarityDelta = (last.vocalClarityScore - first.vocalClarityScore).toInt()
+                val stabilityDelta = (last.stabilityScore - first.stabilityScore).toInt()
+                val tmfDelta = last.tmfSeconds - first.tmfSeconds
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    DeltaMetricTile(
+                        title = "Clareza",
+                        current = "${last.vocalClarityScore}%",
+                        deltaText = formatIntDelta(clarityDelta, "%"),
+                        positive = clarityDelta >= 0,
+                        modifier = Modifier.weight(1f)
+                    )
+                    DeltaMetricTile(
+                        title = "Estabilidade",
+                        current = "${last.stabilityScore}%",
+                        deltaText = formatIntDelta(stabilityDelta, "%"),
+                        positive = stabilityDelta >= 0,
+                        modifier = Modifier.weight(1f)
+                    )
+                    DeltaMetricTile(
+                        title = "TMF",
+                        current = String.format(Locale("pt", "BR"), "%.1fs", last.tmfSeconds),
+                        deltaText = String.format(Locale("pt", "BR"), "%+.1fs", tmfDelta),
+                        positive = tmfDelta >= 0.0,
+                        modifier = Modifier.weight(1f)
+                    )
+                }
+            }
+        }
+    }
+}
+
+private fun formatIntDelta(value: Int, suffix: String): String =
+    if (value >= 0) "+$value$suffix" else "$value$suffix"
+
+@Composable
+private fun DeltaMetricTile(
+    title: String,
+    current: String,
+    deltaText: String,
+    positive: Boolean,
+    modifier: Modifier = Modifier
+) {
+    Surface(
+        modifier = modifier,
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(4.dp)
+        ) {
+            Text(title, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                text = current,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.Bold
+            )
+            Surface(
+                color = if (positive) StatusSuccessBg else StatusDangerBg,
+                shape = RoundedCornerShape(50)
+            ) {
+                Text(
+                    text = deltaText,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = if (positive) StatusSuccess else StatusDanger,
+                    fontWeight = FontWeight.SemiBold,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                )
             }
         }
     }
@@ -365,7 +632,7 @@ private fun ScorePill(label: String, value: String, color: Color) {
         )
         Text(
             text = value,
-            style = MaterialTheme.typography.labelLarge,
+            style = MaterialTheme.typography.labelMedium,
             fontWeight = FontWeight.Bold,
             color = color
         )

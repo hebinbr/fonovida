@@ -8,10 +8,14 @@ import com.example.data.firebase.FonoRepository
 import com.example.data.model.Appointment
 import com.example.data.model.AppointmentStatus
 import com.example.data.model.AppointmentType
+import com.example.data.model.CustomExerciseList
 import com.example.data.model.EvolutionSession
 import com.example.data.model.ExerciseCategory
+import com.example.data.model.ExerciseListItem
 import com.example.data.model.Patient
+import com.example.data.model.PatientAccessCode
 import com.example.data.model.PatientStatus
+import com.example.data.model.SlotBlock
 import com.example.data.model.TherapistProfile
 import com.example.data.model.VoiceExercise
 import com.example.notifications.ReminderScheduler
@@ -31,6 +35,8 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
+import kotlinx.coroutines.delay
+
 sealed interface UiState<out T> {
     data object Loading : UiState<Nothing>
     data class Success<T>(val data: T) : UiState<T>
@@ -42,7 +48,24 @@ data class ClinicData(
     val patients: List<Patient>,
     val exercises: List<VoiceExercise>,
     val sessions: List<EvolutionSession>,
-    val appointments: List<Appointment>
+    val appointments: List<Appointment>,
+    val slotBlocks: List<SlotBlock>,
+    val exerciseLists: List<CustomExerciseList>,
+    val accessCodes: List<PatientAccessCode> = emptyList()
+)
+
+private data class ClinicLeftBundle(
+    val profile: TherapistProfile?,
+    val patients: List<Patient>,
+    val exercises: List<VoiceExercise>,
+    val sessions: List<EvolutionSession>
+)
+
+private data class ClinicRightBundle(
+    val appointments: List<Appointment>,
+    val slotBlocks: List<SlotBlock>,
+    val exerciseLists: List<CustomExerciseList>,
+    val accessCodes: List<PatientAccessCode>
 )
 
 class FonoViewModel(
@@ -80,18 +103,32 @@ class FonoViewModel(
             }
 
     val clinicState: StateFlow<UiState<ClinicData>> = combine(
-        repository.observeProfile(currentUserId),
-        repository.observePatients(currentUserId),
-        repository.observeExercises(currentUserId),
-        repository.observeSessions(currentUserId),
-        repository.observeAppointments(currentUserId)
-    ) { profile, patients, exercises, sessions, appointments ->
+        combine(
+            repository.observeProfile(currentUserId),
+            repository.observePatients(currentUserId),
+            repository.observeExercises(currentUserId),
+            repository.observeSessions(currentUserId)
+        ) { profile, patients, exercises, sessions ->
+            ClinicLeftBundle(profile, patients, exercises, sessions)
+        },
+        combine(
+            repository.observeAppointments(currentUserId),
+            repository.observeSlotBlocks(currentUserId),
+            repository.observeExerciseLists(currentUserId),
+            repository.observePatientAccessCodes(currentUserId)
+        ) { appointments, blocks, lists, codes ->
+            ClinicRightBundle(appointments, blocks, lists, codes)
+        }
+    ) { left, right ->
         ClinicData(
-            profile = profile,
-            patients = patients,
-            exercises = exercises,
-            sessions = sessions,
-            appointments = appointments
+            profile = left.profile,
+            patients = left.patients,
+            exercises = left.exercises,
+            sessions = left.sessions,
+            appointments = right.appointments,
+            slotBlocks = right.slotBlocks,
+            exerciseLists = right.exerciseLists,
+            accessCodes = right.accessCodes
         )
     }
         .toUiState()
@@ -100,6 +137,27 @@ class FonoViewModel(
             started = SharingStarted.WhileSubscribed(STOP_TIMEOUT_MILLIS),
             initialValue = UiState.Loading
         )
+
+    private fun schedulePortalMirrorSync(patientId: String) {
+        if (patientId.isBlank()) return
+        viewModelScope.launch {
+            delay(300L)
+            val data = (clinicState.value as? UiState.Success<ClinicData>)?.data ?: return@launch
+            val patient = data.patients.firstOrNull { it.id == patientId } ?: return@launch
+            if (data.accessCodes.none { it.patientId == patientId && it.active }) return@launch
+            val therapistName = data.profile?.displayName?.ifBlank { userDisplayName } ?: userDisplayName
+            val clinicName = data.profile?.clinicName ?: ""
+            repository.syncActiveAccessCodeForPatient(
+                patient = patient,
+                therapistName = therapistName,
+                clinicName = clinicName,
+                exercises = data.exercises.filter { it.patientId == patientId },
+                patientLists = data.exerciseLists.filter { it.patientId == patientId },
+                appointments = data.appointments.filter { it.patientId == patientId },
+                sessions = data.sessions.filter { it.patientId == patientId }
+            )
+        }
+    }
 
     fun savePatient(
         context: Context,
@@ -168,6 +226,9 @@ class FonoViewModel(
                     if (editingPatientId == null) "Paciente cadastrado com sucesso."
                     else "Cadastro do paciente atualizado."
                 )
+                if (editingPatientId != null) {
+                    schedulePortalMirrorSync(pid)
+                }
                 onSuccess(pid)
             }.onFailure { err ->
                 _events.tryEmit(err.localizedMessage ?: "Não foi possível salvar o paciente.")
@@ -210,6 +271,7 @@ class FonoViewModel(
             )
             _isBusy.value = false
             result.onSuccess {
+                schedulePortalMirrorSync(patientId)
                 _events.tryEmit("Exercício de voz prescrito.")
                 onSuccess()
             }.onFailure { err ->
@@ -221,20 +283,122 @@ class FonoViewModel(
     fun toggleExerciseActive(exercise: VoiceExercise) {
         viewModelScope.launch {
             repository.toggleExerciseActive(exercise.id, !exercise.activeFlag)
+                .onSuccess { schedulePortalMirrorSync(exercise.patientId) }
                 .onFailure { err ->
                     _events.tryEmit(err.localizedMessage ?: "Erro ao atualizar exercício.")
                 }
         }
     }
 
-    fun deleteExercise(exerciseId: String) {
+    fun deleteExercise(exerciseId: String, patientId: String = "") {
         viewModelScope.launch {
             repository.deleteExercise(exerciseId)
-                .onSuccess { _events.tryEmit("Exercício removido.") }
+                .onSuccess {
+                    if (patientId.isNotBlank()) schedulePortalMirrorSync(patientId)
+                    _events.tryEmit("Exercício removido.")
+                }
                 .onFailure { err ->
                     _events.tryEmit(err.localizedMessage ?: "Erro ao remover exercício.")
                 }
         }
+    }
+
+    fun saveExerciseList(
+        editingListId: String?,
+        title: String,
+        clinicalObjective: String,
+        patient: Patient?,
+        items: List<ExerciseListItem>,
+        applyToPatientNow: Boolean,
+        onSuccess: () -> Unit
+    ) {
+        viewModelScope.launch {
+            _isBusy.value = true
+            val result = repository.saveExerciseList(
+                editingListId = editingListId,
+                title = title,
+                clinicalObjective = clinicalObjective,
+                patientId = patient?.id ?: "",
+                patientName = patient?.fullName ?: "",
+                items = items
+            )
+            if (result.isSuccess && applyToPatientNow && patient != null) {
+                repository.applyExerciseListToPatient(patient.id, items)
+                    .onSuccess { count ->
+                        _isBusy.value = false
+                        schedulePortalMirrorSync(patient.id)
+                        _events.tryEmit("Lista salva e $count exercício(s) aplicado(s) a ${patient.fullName}.")
+                        onSuccess()
+                    }
+                    .onFailure { err ->
+                        _isBusy.value = false
+                        _events.tryEmit(err.localizedMessage ?: "Lista salva, mas erro ao aplicar exercícios.")
+                        onSuccess()
+                    }
+            } else {
+                _isBusy.value = false
+                result.onSuccess {
+                    if (patient != null) schedulePortalMirrorSync(patient.id)
+                    _events.tryEmit(
+                        if (editingListId == null) "Lista personalizada criada com sucesso."
+                        else "Lista personalizada atualizada."
+                    )
+                    onSuccess()
+                }.onFailure { err ->
+                    _events.tryEmit(err.localizedMessage ?: "Erro ao salvar lista de exercícios.")
+                }
+            }
+        }
+    }
+
+    fun applyExerciseListToPatient(
+        patient: Patient,
+        list: CustomExerciseList,
+        onSuccess: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            _isBusy.value = true
+            val result = repository.applyExerciseListToPatient(patient.id, list.items)
+            _isBusy.value = false
+            result.onSuccess { count ->
+                schedulePortalMirrorSync(patient.id)
+                _events.tryEmit("$count exercício(s) da lista \"${list.title}\" aplicado(s) a ${patient.fullName}.")
+                onSuccess()
+            }.onFailure { err ->
+                _events.tryEmit(err.localizedMessage ?: "Erro ao aplicar lista ao paciente.")
+            }
+        }
+    }
+
+    fun deleteExerciseList(listId: String) {
+        viewModelScope.launch {
+            repository.deleteExerciseList(listId)
+                .onSuccess { _events.tryEmit("Lista de exercícios removida.") }
+                .onFailure { err ->
+                    _events.tryEmit(err.localizedMessage ?: "Erro ao remover lista.")
+                }
+        }
+    }
+
+    fun dispatchExerciseListShare(
+        context: Context,
+        patient: Patient?,
+        list: CustomExerciseList,
+        therapistName: String
+    ) {
+        val itemsSummary = list.items.mapIndexed { idx, item ->
+            "${idx + 1}. ${item.title} (${item.durationMinutes} min • ${item.frequencyPerWeek}x/sem)\n   ${item.instructions}"
+        }.joinToString("\n")
+        val msg = ReminderScheduler.buildExerciseListGuardianMessage(
+            listTitle = list.title,
+            clinicalObjective = list.clinicalObjective,
+            itemsSummary = itemsSummary,
+            patientName = patient?.fullName ?: list.patientName.ifBlank { null },
+            guardianName = patient?.guardianName,
+            therapistName = therapistName
+        )
+        ReminderScheduler.launchGuardianReminderShare(context, patient?.guardianPhone ?: "", msg)
+        _events.tryEmit("Lista formatada para compartilhamento.")
     }
 
     fun logSession(
@@ -269,6 +433,7 @@ class FonoViewModel(
             )
             _isBusy.value = false
             result.onSuccess {
+                schedulePortalMirrorSync(patient.id)
                 _events.tryEmit("Sessão registrada no histórico de evolução.")
                 onSuccess()
             }.onFailure { err ->
@@ -296,6 +461,8 @@ class FonoViewModel(
         notes: String,
         reminderEnabled: Boolean,
         reminderLeadMinutes: Long,
+        patientReminderEnabled: Boolean,
+        patientReminderLeadMinutes: Long,
         onSuccess: () -> Unit
     ) {
         viewModelScope.launch {
@@ -307,7 +474,9 @@ class FonoViewModel(
                 sessionType = sessionType,
                 notes = notes,
                 reminderEnabled = reminderEnabled,
-                reminderLeadMinutes = reminderLeadMinutes
+                reminderLeadMinutes = reminderLeadMinutes,
+                patientReminderEnabled = patientReminderEnabled,
+                patientReminderLeadMinutes = patientReminderLeadMinutes
             )
             _isBusy.value = false
             result.onSuccess { apptId ->
@@ -325,17 +494,47 @@ class FonoViewModel(
                         status = AppointmentStatus.AGENDADA.name,
                         notes = notes,
                         reminderEnabled = reminderEnabled,
-                        reminderLeadMinutes = reminderLeadMinutes
+                        reminderLeadMinutes = reminderLeadMinutes,
+                        patientReminderEnabled = patientReminderEnabled,
+                        patientReminderLeadMinutes = patientReminderLeadMinutes
                     )
                 )
+                schedulePortalMirrorSync(patient.id)
                 _events.tryEmit(
-                    if (reminderEnabled) "Consulta agendada com lembrete automático ativado."
+                    if (reminderEnabled || patientReminderEnabled)
+                        "Consulta agendada com lembretes automáticos ativados."
                     else "Consulta agendada com sucesso."
                 )
                 onSuccess()
             }.onFailure { err ->
                 _events.tryEmit(err.localizedMessage ?: "Erro ao agendar consulta.")
             }
+        }
+    }
+
+    fun blockTimeSlot(
+        dateKey: String,
+        hour: Int,
+        minute: Int,
+        durationMinutes: Int = 60,
+        reason: String = "Horário ocupado"
+    ) {
+        viewModelScope.launch {
+            repository.blockSlot(dateKey, hour, minute, durationMinutes, reason)
+                .onSuccess { _events.tryEmit("Horário marcado como ocupado.") }
+                .onFailure { err ->
+                    _events.tryEmit(err.localizedMessage ?: "Não foi possível bloquear o horário.")
+                }
+        }
+    }
+
+    fun unblockTimeSlot(blockId: String) {
+        viewModelScope.launch {
+            repository.unblockSlot(blockId)
+                .onSuccess { _events.tryEmit("Horário marcado como disponível.") }
+                .onFailure { err ->
+                    _events.tryEmit(err.localizedMessage ?: "Não foi possível liberar o horário.")
+                }
         }
     }
 
@@ -350,6 +549,7 @@ class FonoViewModel(
                     if (newStatus.isTerminal) {
                         ReminderScheduler.cancelAppointmentReminder(context, appointment.id)
                     }
+                    schedulePortalMirrorSync(appointment.patientId)
                     _events.tryEmit("Consulta marcada como ${newStatus.label.lowercase()}.")
                 }
                 .onFailure { err ->
@@ -422,6 +622,65 @@ class FonoViewModel(
                 _events.tryEmit(err.localizedMessage ?: "Erro ao atualizar perfil.")
             }
         }
+    }
+
+    fun generatePatientAccessCode(
+        patient: Patient,
+        data: ClinicData,
+        fallbackName: String,
+        onSuccess: (String) -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            _isBusy.value = true
+            val therapistName = data.profile?.displayName?.ifBlank { fallbackName } ?: fallbackName
+            val clinicName = data.profile?.clinicName ?: ""
+            val result = repository.generatePatientAccessCode(
+                patient = patient,
+                therapistName = therapistName,
+                clinicName = clinicName,
+                exercises = data.exercises.filter { it.patientId == patient.id },
+                patientLists = data.exerciseLists.filter { it.patientId == patient.id },
+                appointments = data.appointments.filter { it.patientId == patient.id },
+                sessions = data.sessions.filter { it.patientId == patient.id }
+            )
+            _isBusy.value = false
+            result.onSuccess { newCode ->
+                _events.tryEmit("Código $newCode gerado para ${patient.fullName}.")
+                onSuccess(newCode)
+            }.onFailure { err ->
+                _events.tryEmit(err.localizedMessage ?: "Não foi possível gerar o código de acesso.")
+            }
+        }
+    }
+
+    fun revokePatientAccessCode(code: String) {
+        viewModelScope.launch {
+            _isBusy.value = true
+            val result = repository.revokePatientAccessCode(code)
+            _isBusy.value = false
+            result.onSuccess {
+                _events.tryEmit("Código $code desativado. O paciente precisará de um novo código.")
+            }.onFailure { err ->
+                _events.tryEmit(err.localizedMessage ?: "Não foi possível desativar o código.")
+            }
+        }
+    }
+
+    fun dispatchAccessCodeShare(
+        context: Context,
+        patient: Patient,
+        code: String,
+        therapistName: String,
+        clinicName: String
+    ) {
+        val message = ReminderScheduler.buildPatientAccessCodeMessage(
+            patient = patient,
+            code = code,
+            therapistName = therapistName,
+            clinicName = clinicName
+        )
+        ReminderScheduler.launchGuardianReminderShare(context, patient.guardianPhone, message)
+        _events.tryEmit("Instruções com o código $code prontas para envio.")
     }
 
     fun notifyMessage(msg: String) {

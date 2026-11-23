@@ -25,6 +25,7 @@ import androidx.compose.material.icons.automirrored.rounded.Logout
 import androidx.compose.material.icons.rounded.Badge
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.NotificationsActive
+import androidx.compose.material.icons.rounded.SwapHoriz
 import androidx.compose.material.icons.rounded.VerifiedUser
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -59,6 +60,7 @@ fun ProfileScreen(
     sessionCount: Int,
     onEditProfile: () -> Unit,
     onNotifyFeedback: (String) -> Unit,
+    onSwitchToPatientMode: () -> Unit = {},
     onSignOut: () -> Unit
 ) {
     val context = LocalContext.current
@@ -234,6 +236,21 @@ fun ProfileScreen(
                             )
                         }
                     }
+                }
+            }
+
+            item {
+                OutlinedButton(
+                    onClick = onSwitchToPatientMode,
+                    shape = RoundedCornerShape(14.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("switch_to_patient_mode_btn")
+                ) {
+                    Icon(Icons.Rounded.SwapHoriz, contentDescription = null)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Acessar Portal do Paciente (com Código)")
                 }
             }
 

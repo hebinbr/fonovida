@@ -2,13 +2,19 @@ package com.example.data.firebase
 
 import android.content.Context
 import com.example.R
+import com.example.data.model.AccessCodeGenerator
 import com.example.data.model.Appointment
 import com.example.data.model.AppointmentStatus
 import com.example.data.model.AppointmentType
+import com.example.data.model.CustomExerciseList
 import com.example.data.model.EvolutionSession
 import com.example.data.model.ExerciseCategory
+import com.example.data.model.ExerciseListItem
 import com.example.data.model.Patient
+import com.example.data.model.PatientAccessCode
+import com.example.data.model.PatientExerciseSnapshotItem
 import com.example.data.model.PatientStatus
+import com.example.data.model.SlotBlock
 import com.example.data.model.TherapistProfile
 import com.example.data.model.VoiceExercise
 import com.google.firebase.auth.FirebaseAuth
@@ -26,6 +32,9 @@ import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.tasks.await
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class FonoRepository(
     private val db: FirebaseFirestore,
@@ -132,6 +141,52 @@ class FonoRepository(
                         Appointment::class.java,
                         DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
                     ).sortedBy { it.scheduledAtMillis }
+                }
+                .withFirestoreErrorLogging(userId, OperationType.LIST, path)
+        )
+    }
+
+    fun observeSlotBlocks(userId: String): Flow<List<SlotBlock>> = flow {
+        val path = "users/$userId/slotBlocks"
+        emitAll(
+            db.collection("users").document(userId).collection("slotBlocks")
+                .snapshots()
+                .map { snapshot ->
+                    snapshot.toObjects(
+                        SlotBlock::class.java,
+                        DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                    ).sortedWith(compareBy({ it.dateKey }, { it.hour }, { it.minute }))
+                }
+                .withFirestoreErrorLogging(userId, OperationType.LIST, path)
+        )
+    }
+
+    fun observeExerciseLists(userId: String): Flow<List<CustomExerciseList>> = flow {
+        val path = "users/$userId/exerciseLists"
+        emitAll(
+            db.collection("users").document(userId).collection("exerciseLists")
+                .snapshots()
+                .map { snapshot ->
+                    snapshot.toObjects(
+                        CustomExerciseList::class.java,
+                        DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                    ).sortedByDescending { it.updatedAt?.seconds ?: 0L }
+                }
+                .withFirestoreErrorLogging(userId, OperationType.LIST, path)
+        )
+    }
+
+    fun observePatientAccessCodes(userId: String): Flow<List<PatientAccessCode>> = flow {
+        val path = "patientAccessCodes"
+        emitAll(
+            db.collection("patientAccessCodes")
+                .whereEqualTo("therapistId", userId)
+                .snapshots()
+                .map { snapshot ->
+                    snapshot.toObjects(
+                        PatientAccessCode::class.java,
+                        DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                    ).sortedByDescending { it.createdAt?.seconds ?: 0L }
                 }
                 .withFirestoreErrorLogging(userId, OperationType.LIST, path)
         )
@@ -324,11 +379,19 @@ class FonoRepository(
             val exercises = userRef.collection("exercises").whereEqualTo("patientId", patientId).get().await()
             val sessions = userRef.collection("sessions").whereEqualTo("patientId", patientId).get().await()
             val appointments = userRef.collection("appointments").whereEqualTo("patientId", patientId).get().await()
+            val lists = userRef.collection("exerciseLists").whereEqualTo("patientId", patientId).get().await()
+            val accessCodes = db.collection("patientAccessCodes")
+                .whereEqualTo("therapistId", uid)
+                .whereEqualTo("patientId", patientId)
+                .get()
+                .await()
 
             val batch = db.batch()
             exercises.documents.forEach { batch.delete(it.reference) }
             sessions.documents.forEach { batch.delete(it.reference) }
             appointments.documents.forEach { batch.delete(it.reference) }
+            lists.documents.forEach { batch.delete(it.reference) }
+            accessCodes.documents.forEach { batch.delete(it.reference) }
             batch.delete(userRef.collection("patients").document(patientId))
             batch.commit().await()
             Result.success(Unit)
@@ -498,7 +561,9 @@ class FonoRepository(
         sessionType: AppointmentType,
         notes: String,
         reminderEnabled: Boolean,
-        reminderLeadMinutes: Long
+        reminderLeadMinutes: Long,
+        patientReminderEnabled: Boolean,
+        patientReminderLeadMinutes: Long
     ): Result<String> {
         var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/appointments"
         return try {
@@ -521,6 +586,8 @@ class FonoRepository(
                 "notes" to notes.trim().take(1000),
                 "reminderEnabled" to reminderEnabled,
                 "reminderLeadMinutes" to reminderLeadMinutes.coerceIn(5L, 10080L),
+                "patientReminderEnabled" to patientReminderEnabled,
+                "patientReminderLeadMinutes" to patientReminderLeadMinutes.coerceIn(5L, 10080L),
                 "reminderSentMillis" to 0L,
                 "createdAt" to FieldValue.serverTimestamp(),
                 "updatedAt" to FieldValue.serverTimestamp()
@@ -531,6 +598,59 @@ class FonoRepository(
             throw e
         } catch (e: Exception) {
             handleFirestoreError(e, OperationType.CREATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun blockSlot(
+        dateKey: String,
+        hour: Int,
+        minute: Int,
+        durationMinutes: Int,
+        reason: String
+    ): Result<String> {
+        val docId = "${dateKey}_${hour}_${minute}"
+        var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/slotBlocks/$docId"
+        return try {
+            val uid = requireUserId()
+            require(Regex("^\\d{4}-\\d{2}-\\d{2}$").matches(dateKey)) { "Data inválida." }
+            val docRef = db.collection("users").document(uid)
+                .collection("slotBlocks").document(docId)
+            docPath = docRef.path
+            val payload = mapOf(
+                "userId" to uid,
+                "dateKey" to dateKey,
+                "hour" to hour.coerceIn(0, 23).toLong(),
+                "minute" to minute.coerceIn(0, 59).toLong(),
+                "durationMinutes" to durationMinutes.coerceIn(15, 240).toLong(),
+                "reason" to reason.trim().ifBlank { "Horário ocupado" }.take(120),
+                "createdAt" to FieldValue.serverTimestamp(),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            docRef.set(payload).await()
+            Result.success(docId)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun unblockSlot(blockId: String): Result<Unit> {
+        var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/slotBlocks/$blockId"
+        return try {
+            val uid = requireUserId()
+            require(blockId.isNotBlank())
+            val docRef = db.collection("users").document(uid)
+                .collection("slotBlocks").document(blockId)
+            docPath = docRef.path
+            docRef.delete().await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, docPath)
             Result.failure(e)
         }
     }
@@ -603,5 +723,419 @@ class FonoRepository(
             handleFirestoreError(e, OperationType.DELETE, docPath)
             Result.failure(e)
         }
+    }
+
+    suspend fun saveExerciseList(
+        editingListId: String?,
+        title: String,
+        clinicalObjective: String,
+        patientId: String,
+        patientName: String,
+        items: List<ExerciseListItem>
+    ): Result<String> {
+        var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/exerciseLists"
+        return try {
+            val uid = requireUserId()
+            val cleanTitle = title.trim().take(120)
+            require(cleanTitle.length >= 2) { "O título da lista deve ter ao menos 2 caracteres." }
+            require(items.isNotEmpty()) { "Adicione ao menos 1 exercício à lista." }
+            val safeItems = items.take(20).map { item ->
+                mapOf(
+                    "title" to item.title.trim().take(100).ifBlank { "Exercício de Voz" },
+                    "category" to item.exerciseCategory.name,
+                    "instructions" to item.instructions.trim().take(1000).ifBlank { "Executar conforme orientação em consultório." },
+                    "durationMinutes" to item.durationMinutes.coerceIn(1L, 120L),
+                    "frequencyPerWeek" to item.frequencyPerWeek.coerceIn(1L, 21L)
+                )
+            }
+            val cleanPatientId = patientId.trim().take(128)
+            val cleanPatientName = if (cleanPatientId.isBlank()) "" else patientName.trim().take(100)
+            val cleanObjective = clinicalObjective.trim().take(400)
+
+            val collectionRef = db.collection("users").document(uid).collection("exerciseLists")
+            if (editingListId.isNullOrBlank()) {
+                val docRef = collectionRef.document()
+                docPath = docRef.path
+                val payload = mapOf(
+                    "userId" to uid,
+                    "title" to cleanTitle,
+                    "clinicalObjective" to cleanObjective,
+                    "patientId" to cleanPatientId,
+                    "patientName" to cleanPatientName,
+                    "items" to safeItems,
+                    "createdAt" to FieldValue.serverTimestamp(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                docRef.set(payload).await()
+                Result.success(docRef.id)
+            } else {
+                val docRef = collectionRef.document(editingListId)
+                docPath = docRef.path
+                docRef.update(
+                    mapOf(
+                        "title" to cleanTitle,
+                        "clinicalObjective" to cleanObjective,
+                        "patientId" to cleanPatientId,
+                        "patientName" to cleanPatientName,
+                        "items" to safeItems,
+                        "updatedAt" to FieldValue.serverTimestamp()
+                    )
+                ).await()
+                Result.success(editingListId)
+            }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val op = if (editingListId.isNullOrBlank()) OperationType.CREATE else OperationType.UPDATE
+            handleFirestoreError(e, op, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun deleteExerciseList(listId: String): Result<Unit> {
+        var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/exerciseLists/$listId"
+        return try {
+            val uid = requireUserId()
+            require(listId.isNotBlank())
+            val docRef = db.collection("users").document(uid)
+                .collection("exerciseLists").document(listId)
+            docPath = docRef.path
+            docRef.delete().await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.DELETE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun applyExerciseListToPatient(
+        patientId: String,
+        items: List<ExerciseListItem>
+    ): Result<Int> {
+        var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/exercises"
+        return try {
+            val uid = requireUserId()
+            require(patientId.isNotBlank()) { "Paciente não selecionado." }
+            require(items.isNotEmpty()) { "A lista não possui exercícios." }
+
+            val exercisesCol = db.collection("users").document(uid).collection("exercises")
+            val batch = db.batch()
+            val bounded = items.take(20)
+            bounded.forEach { item ->
+                val docRef = exercisesCol.document()
+                docPath = docRef.path
+                val payload = mapOf(
+                    "userId" to uid,
+                    "patientId" to patientId,
+                    "title" to item.title.trim().take(100).ifBlank { "Exercício de Voz" },
+                    "category" to item.exerciseCategory.name,
+                    "instructions" to item.instructions.trim().take(1000).ifBlank { "Executar conforme orientação clínica." },
+                    "targetDurationMinutes" to item.durationMinutes.coerceIn(1L, 120L),
+                    "frequencyPerWeek" to item.frequencyPerWeek.coerceIn(1L, 21L),
+                    "activeFlag" to true,
+                    "createdAt" to FieldValue.serverTimestamp(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+                batch.set(docRef, payload)
+            }
+            batch.commit().await()
+            Result.success(bounded.size)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    private fun buildExerciseSnapshotMaps(
+        exercises: List<VoiceExercise>,
+        patientLists: List<CustomExerciseList>
+    ): List<Map<String, Any>> {
+        val seenKeys = mutableSetOf<String>()
+        val result = mutableListOf<Map<String, Any>>()
+
+        exercises.filter { it.activeFlag }.forEach { ex ->
+            val key = "${ex.title.trim().lowercase()}|${ex.exerciseCategory.name}"
+            if (seenKeys.add(key) && result.size < 40) {
+                result.add(
+                    mapOf(
+                        "title" to ex.title.trim().take(100),
+                        "category" to ex.exerciseCategory.name,
+                        "instructions" to ex.instructions.trim().take(1000),
+                        "durationMinutes" to ex.targetDurationMinutes.coerceIn(1L, 120L),
+                        "frequencyPerWeek" to ex.frequencyPerWeek.coerceIn(1L, 21L),
+                        "sourceLabel" to "Plano Ativo"
+                    )
+                )
+            }
+        }
+
+        patientLists.forEach { list ->
+            list.items.forEach { item ->
+                val key = "${item.title.trim().lowercase()}|${item.exerciseCategory.name}"
+                if (seenKeys.add(key) && result.size < 40) {
+                    result.add(
+                        mapOf(
+                            "title" to item.title.trim().take(100),
+                            "category" to item.exerciseCategory.name,
+                            "instructions" to item.instructions.trim().take(1000),
+                            "durationMinutes" to item.durationMinutes.coerceIn(1L, 120L),
+                            "frequencyPerWeek" to item.frequencyPerWeek.coerceIn(1L, 21L),
+                            "sourceLabel" to "Lista: ${list.title.take(32)}"
+                        )
+                    )
+                }
+            }
+        }
+        return result
+    }
+
+    private fun buildNextAppointmentSummary(appointments: List<Appointment>): String {
+        val now = System.currentTimeMillis()
+        val next = appointments
+            .filter { !it.appointmentStatus.isTerminal && it.scheduledAtMillis >= now - 15 * 60_000L }
+            .minByOrNull { it.scheduledAtMillis }
+            ?: return ""
+        val fmt = SimpleDateFormat("dd/MM/yyyy 'às' HH:mm", Locale("pt", "BR"))
+        return "${fmt.format(Date(next.scheduledAtMillis))} • ${next.appointmentType.label}".take(200)
+    }
+
+    private fun buildRecentProgressSummary(sessions: List<EvolutionSession>): String {
+        val latest = sessions.maxByOrNull { it.sessionDateMillis } ?: return ""
+        val tmfFmt = String.format(Locale("pt", "BR"), "%.1fs", latest.tmfSeconds)
+        return "Último registro (${sessions.size} sessões): Clareza ${latest.vocalClarityScore}% • TMF $tmfFmt".take(300)
+    }
+
+    suspend fun generatePatientAccessCode(
+        patient: Patient,
+        therapistName: String,
+        clinicName: String,
+        exercises: List<VoiceExercise>,
+        patientLists: List<CustomExerciseList>,
+        appointments: List<Appointment>,
+        sessions: List<EvolutionSession>
+    ): Result<String> {
+        var docPath = "patientAccessCodes"
+        return try {
+            val uid = requireUserId()
+            require(patient.id.isNotBlank()) { "Paciente inválido." }
+
+            val newCode = AccessCodeGenerator.generate()
+            val codeRef = db.collection("patientAccessCodes").document(newCode)
+            docPath = codeRef.path
+
+            val existingActive = db.collection("patientAccessCodes")
+                .whereEqualTo("therapistId", uid)
+                .whereEqualTo("patientId", patient.id)
+                .get()
+                .await()
+
+            val batch = db.batch()
+            existingActive.documents.forEach { doc ->
+                if (doc.getBoolean("active") == true) {
+                    batch.update(
+                        doc.reference,
+                        mapOf(
+                            "active" to false,
+                            "updatedAt" to FieldValue.serverTimestamp()
+                        )
+                    )
+                }
+            }
+
+            val payload = mapOf(
+                "code" to newCode,
+                "therapistId" to uid,
+                "therapistName" to therapistName.trim().ifBlank { "Fonoaudióloga" }.take(100),
+                "clinicName" to clinicName.trim().take(100),
+                "patientId" to patient.id,
+                "patientName" to patient.fullName.trim().take(100),
+                "clinicalFocus" to patient.clinicalFocus.trim().take(120),
+                "weeklyGoalMinutes" to patient.weeklyGoalMinutes.coerceIn(10L, 1000L),
+                "active" to true,
+                "redeemedByUid" to "",
+                "redeemedAtMillis" to 0L,
+                "exercisesSnapshot" to buildExerciseSnapshotMaps(exercises, patientLists),
+                "nextAppointmentSummary" to buildNextAppointmentSummary(appointments),
+                "recentProgressSummary" to buildRecentProgressSummary(sessions),
+                "createdAt" to FieldValue.serverTimestamp(),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            batch.set(codeRef, payload)
+            batch.commit().await()
+            Result.success(newCode)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.CREATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun revokePatientAccessCode(code: String): Result<Unit> {
+        val normalized = AccessCodeGenerator.normalize(code)
+        var docPath = "patientAccessCodes/$normalized"
+        return try {
+            requireUserId()
+            require(normalized.isNotBlank())
+            val docRef = db.collection("patientAccessCodes").document(normalized)
+            docPath = docRef.path
+            docRef.update(
+                mapOf(
+                    "active" to false,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun syncActiveAccessCodeForPatient(
+        patient: Patient,
+        therapistName: String,
+        clinicName: String,
+        exercises: List<VoiceExercise>,
+        patientLists: List<CustomExerciseList>,
+        appointments: List<Appointment>,
+        sessions: List<EvolutionSession>
+    ) {
+        try {
+            val uid = auth.currentUser?.uid ?: return
+            if (patient.id.isBlank()) return
+            val activeDocs = db.collection("patientAccessCodes")
+                .whereEqualTo("therapistId", uid)
+                .whereEqualTo("patientId", patient.id)
+                .get()
+                .await()
+                .documents
+                .filter { it.getBoolean("active") == true }
+            if (activeDocs.isEmpty()) return
+
+            val updates = mapOf(
+                "therapistName" to therapistName.trim().ifBlank { "Fonoaudióloga" }.take(100),
+                "clinicName" to clinicName.trim().take(100),
+                "patientName" to patient.fullName.trim().take(100),
+                "clinicalFocus" to patient.clinicalFocus.trim().take(120),
+                "weeklyGoalMinutes" to patient.weeklyGoalMinutes.coerceIn(10L, 1000L),
+                "exercisesSnapshot" to buildExerciseSnapshotMaps(exercises, patientLists),
+                "nextAppointmentSummary" to buildNextAppointmentSummary(appointments),
+                "recentProgressSummary" to buildRecentProgressSummary(sessions),
+                "updatedAt" to FieldValue.serverTimestamp()
+            )
+            val batch = db.batch()
+            activeDocs.forEach { batch.update(it.reference, updates) }
+            batch.commit().await()
+        } catch (e: CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            // Best-effort sync for patient portal mirror
+        }
+    }
+
+    suspend fun redeemPatientAccessCode(rawCode: String): Result<PatientAccessCode> {
+        val normalized = AccessCodeGenerator.normalize(rawCode)
+        var docPath = "patientAccessCodes/$normalized"
+        return try {
+            val uid = auth.currentUser?.uid
+                ?: throw IllegalStateException("Conecte sua conta Google antes de validar o código.")
+            require(normalized.length in 6..16) {
+                "Digite um código válido com 6 a 16 caracteres (ex.: FV8K4M2P)."
+            }
+
+            val docRef = db.collection("patientAccessCodes").document(normalized)
+            docPath = docRef.path
+            val snap = docRef.get().await()
+            if (!snap.exists()) {
+                return Result.failure(IllegalArgumentException("Código não encontrado. Confira com sua fonoaudióloga."))
+            }
+            val codeObj = snap.toObject(
+                PatientAccessCode::class.java,
+                DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+            ) ?: return Result.failure(IllegalStateException("Não foi possível ler os dados do código."))
+
+            if (!codeObj.active) {
+                return Result.failure(IllegalStateException("Este código foi desativado pela fonoaudióloga. Solicite um novo código."))
+            }
+            if (codeObj.redeemedByUid.isNotBlank() && codeObj.redeemedByUid != uid) {
+                return Result.failure(IllegalStateException("Este código já está vinculado a outra conta."))
+            }
+
+            val nowMillis = System.currentTimeMillis()
+            docRef.update(
+                mapOf(
+                    "redeemedByUid" to uid,
+                    "redeemedAtMillis" to nowMillis,
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+
+            Result.success(
+                codeObj.copy(
+                    id = normalized,
+                    redeemedByUid = uid,
+                    redeemedAtMillis = nowMillis
+                )
+            )
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: FirebaseFirestoreException) {
+            handleFirestoreError(e, OperationType.GET, docPath)
+            val friendlyMsg = if (e.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                "Código inválido, desativado ou já utilizado por outra conta."
+            } else {
+                e.localizedMessage ?: "Erro ao validar o código."
+            }
+            Result.failure(IllegalStateException(friendlyMsg, e))
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.GET, docPath)
+            Result.failure(e)
+        }
+    }
+
+    fun observeRedeemedPatientAccessCode(rawCode: String): Flow<PatientAccessCode?> = flow {
+        val normalized = AccessCodeGenerator.normalize(rawCode)
+        val uid = auth.currentUser?.uid
+        if (normalized.isBlank() || uid.isNullOrBlank()) {
+            emit(null)
+            return@flow
+        }
+        val docRef = db.collection("patientAccessCodes").document(normalized)
+        emitAll(
+            docRef.snapshots()
+                .map { snapshot ->
+                    if (!snapshot.exists()) {
+                        null
+                    } else {
+                        val obj = snapshot.toObject(
+                            PatientAccessCode::class.java,
+                            DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
+                        )
+                        if (obj != null && obj.active && (obj.redeemedByUid.isBlank() || obj.redeemedByUid == uid)) {
+                            obj
+                        } else {
+                            null
+                        }
+                    }
+                }
+                .catch { error ->
+                    val firestoreError = generateSequence(error) { it.cause }
+                        .filterIsInstance<FirebaseFirestoreException>()
+                        .firstOrNull()
+                    if (firestoreError == null && error is CancellationException) throw error
+                    if (firestoreError?.code == FirebaseFirestoreException.Code.PERMISSION_DENIED) {
+                        emit(null)
+                    } else {
+                        throw error
+                    }
+                }
+        )
     }
 }

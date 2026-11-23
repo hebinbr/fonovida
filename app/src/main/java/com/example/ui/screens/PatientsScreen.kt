@@ -23,8 +23,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.FormatListBulleted
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.VpnKey
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -54,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.model.EvolutionSession
 import com.example.data.model.Patient
+import com.example.data.model.PatientAccessCode
 import com.example.data.model.PatientStatus
 import com.example.ui.theme.StatusSuccess
 import com.example.ui.theme.StatusSuccessBg
@@ -64,6 +67,9 @@ import com.example.ui.theme.StatusWarningBg
 fun PatientsScreen(
     patients: List<Patient>,
     sessions: List<EvolutionSession>,
+    accessCodes: List<PatientAccessCode> = emptyList(),
+    exerciseListsCount: Int = 0,
+    onOpenExerciseLists: () -> Unit = {},
     onPatientClick: (String) -> Unit,
     onAddPatientClick: () -> Unit
 ) {
@@ -153,6 +159,62 @@ fun PatientsScreen(
                     }
                 }
 
+                item {
+                    Card(
+                        shape = MaterialTheme.shapes.large,
+                        colors = CardDefaults.cardColors(
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f)
+                        ),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onOpenExerciseLists() }
+                            .testTag("open_exercise_lists_btn")
+                    ) {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.SpaceBetween
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                modifier = Modifier.weight(1f)
+                            ) {
+                                Surface(
+                                    color = MaterialTheme.colorScheme.secondary,
+                                    shape = RoundedCornerShape(12.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Rounded.FormatListBulleted,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.onSecondary,
+                                        modifier = Modifier.padding(8.dp).size(20.dp)
+                                    )
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Column {
+                                    Text(
+                                        text = "Listas de Exercícios Personalizadas",
+                                        style = MaterialTheme.typography.titleSmall,
+                                        fontWeight = FontWeight.Bold
+                                    )
+                                    Text(
+                                        text = "$exerciseListsCount lista(s) salva(s) • Protocolos, PDF e envio",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
+                                contentDescription = "Abrir listas personalizadas",
+                                tint = MaterialTheme.colorScheme.secondary
+                            )
+                        }
+                    }
+                }
+
                 if (filteredPatients.isEmpty()) {
                     item {
                         Card(
@@ -209,12 +271,15 @@ fun PatientsScreen(
                         val goalProgress = (weeklyMinutes.toFloat() / patient.weeklyGoalMinutes.coerceAtLeast(1).toFloat())
                             .coerceIn(0f, 1f)
 
+                        val activeCode = accessCodes.firstOrNull { it.patientId == patient.id && it.active }?.code
+
                         PatientSummaryCard(
                             patient = patient,
                             sessionCount = patSessions.size,
                             latestClarity = latestSession?.vocalClarityScore?.toInt(),
                             weeklyMinutes = weeklyMinutes.toInt(),
                             goalProgress = goalProgress,
+                            activeCode = activeCode,
                             onClick = { onPatientClick(patient.id) }
                         )
                     }
@@ -231,6 +296,7 @@ private fun PatientSummaryCard(
     latestClarity: Int?,
     weeklyMinutes: Int,
     goalProgress: Float,
+    activeCode: String? = null,
     onClick: () -> Unit
 ) {
     Card(
@@ -278,6 +344,33 @@ private fun PatientSummaryCard(
                         color = badgeFg,
                         modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
                     )
+                }
+            }
+
+            if (!activeCode.isNullOrBlank()) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer,
+                    shape = RoundedCornerShape(8.dp)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.VpnKey,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            text = "Código de acesso: $activeCode",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onSecondaryContainer
+                        )
+                    }
                 }
             }
 

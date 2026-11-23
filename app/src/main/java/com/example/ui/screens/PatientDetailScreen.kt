@@ -19,11 +19,13 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material.icons.rounded.PlayArrow
+import androidx.compose.material.icons.rounded.PlaylistAddCheck
 import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -55,11 +57,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Visibility
+import androidx.compose.material.icons.rounded.VpnKey
+import androidx.compose.material3.FilterChip
+import androidx.compose.ui.unit.sp
+import com.example.data.model.CustomExerciseList
 import com.example.data.model.EvolutionSession
 import com.example.data.model.ExerciseCategory
 import com.example.data.model.Patient
+import com.example.data.model.PatientAccessCode
+import com.example.data.model.ReportTimeframe
 import com.example.data.model.TherapistProfile
 import com.example.data.model.VoiceExercise
+import com.example.ui.components.CategoryPerformanceCard
+import com.example.ui.components.ProgressDeltaCard
+import com.example.ui.components.TmfProgressionChartCard
 import com.example.ui.components.VoiceEvolutionChartCard
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -71,23 +86,49 @@ fun PatientDetailScreen(
     patient: Patient,
     exercises: List<VoiceExercise>,
     sessions: List<EvolutionSession>,
+    patientExerciseLists: List<CustomExerciseList>,
+    totalExerciseListsCount: Int,
     profile: TherapistProfile?,
+    activeAccessCode: PatientAccessCode? = null,
+    isAccessCodeBusy: Boolean = false,
     onBack: () -> Unit,
     onEditPatient: () -> Unit,
     onDeletePatient: () -> Unit,
+    onGenerateAccessCode: () -> Unit = {},
+    onRevokeAccessCode: (String) -> Unit = {},
+    onShareAccessCode: (String) -> Unit = {},
+    onCopyAccessCode: (String) -> Unit = {},
     onPrescribeExercise: () -> Unit,
     onToggleExerciseActive: (VoiceExercise) -> Unit,
     onDeleteExercise: (String) -> Unit,
+    onGenerateExerciseList: () -> Unit,
+    onApplySavedExerciseList: () -> Unit,
+    onApplySpecificList: (CustomExerciseList) -> Unit,
+    onEditExerciseList: (CustomExerciseList) -> Unit,
+    onDeleteExerciseList: (String) -> Unit,
+    onShareExerciseList: (CustomExerciseList) -> Unit,
+    onExportExerciseListPdf: (CustomExerciseList) -> Unit,
     onLogSession: (prefillTitle: String, prefillCategory: ExerciseCategory) -> Unit,
     onDeleteSession: (String) -> Unit,
-    onExportPdf: () -> Unit,
+    onPreviewPdf: (ReportTimeframe, List<EvolutionSession>) -> Unit,
+    onExportPdf: (ReportTimeframe, List<EvolutionSession>) -> Unit,
     onSendExerciseReminder: () -> Unit
 ) {
     var selectedTab by remember { mutableIntStateOf(0) }
     var confirmDeletePatient by remember { mutableStateOf(false) }
+    var reportTimeframe by remember { mutableStateOf(ReportTimeframe.TUDO) }
 
     val orderedSessions = remember(sessions) {
         sessions.sortedByDescending { it.sessionDateMillis }
+    }
+    val filteredReportSessions = remember(sessions, reportTimeframe) {
+        val days = reportTimeframe.days
+        if (days == null) {
+            sessions
+        } else {
+            val cutoff = System.currentTimeMillis() - (days.toLong() * 86_400_000L)
+            sessions.filter { it.sessionDateMillis >= cutoff }
+        }
     }
     val dateFmt = remember { SimpleDateFormat("dd/MM/yyyy 'às' HH:mm", Locale("pt", "BR")) }
 
@@ -179,7 +220,7 @@ fun PatientDetailScreen(
                 Tab(
                     selected = selectedTab == 2,
                     onClick = { selectedTab = 2 },
-                    text = { Text("Relatório PDF") }
+                    text = { Text("Relatórios") }
                 )
             }
 
@@ -194,6 +235,16 @@ fun PatientDetailScreen(
                     ) {
                         item {
                             PatientKpiSummaryRow(sessions = sessions)
+                        }
+                        item {
+                            PatientAccessCodeCard(
+                                activeAccessCode = activeAccessCode,
+                                isBusy = isAccessCodeBusy,
+                                onGenerate = onGenerateAccessCode,
+                                onRevoke = onRevokeAccessCode,
+                                onShare = onShareAccessCode,
+                                onCopy = onCopyAccessCode
+                            )
                         }
                         item {
                             VoiceEvolutionChartCard(sessions = sessions)
@@ -264,6 +315,16 @@ fun PatientDetailScreen(
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
                         item {
+                            PatientAccessCodeCard(
+                                activeAccessCode = activeAccessCode,
+                                isBusy = isAccessCodeBusy,
+                                onGenerate = onGenerateAccessCode,
+                                onRevoke = onRevokeAccessCode,
+                                onShare = onShareAccessCode,
+                                onCopy = onCopyAccessCode
+                            )
+                        }
+                        item {
                             Card(
                                 shape = MaterialTheme.shapes.medium,
                                 colors = CardDefaults.cardColors(
@@ -293,6 +354,140 @@ fun PatientDetailScreen(
                                         Icon(Icons.Rounded.Send, contentDescription = null, modifier = Modifier.size(16.dp))
                                         Spacer(Modifier.width(6.dp))
                                         Text("Enviar")
+                                    }
+                                }
+                            }
+                        }
+
+                        item {
+                            Card(
+                                shape = MaterialTheme.shapes.medium,
+                                colors = CardDefaults.cardColors(
+                                    containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f)
+                                ),
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Column(
+                                    modifier = Modifier.padding(14.dp),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                                ) {
+                                    Row(verticalAlignment = Alignment.CenterVertically) {
+                                        Icon(
+                                            imageVector = Icons.Rounded.AutoAwesome,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.secondary,
+                                            modifier = Modifier.size(20.dp)
+                                        )
+                                        Spacer(Modifier.width(8.dp))
+                                        Column {
+                                            Text(
+                                                text = "Listas Personalizadas de Exercícios",
+                                                style = MaterialTheme.typography.titleSmall,
+                                                fontWeight = FontWeight.Bold
+                                            )
+                                            Text(
+                                                text = "Gere um roteiro exclusivo ou aplique um modelo salvo da clínica.",
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                    }
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Button(
+                                            onClick = onGenerateExerciseList,
+                                            modifier = Modifier.weight(1f).testTag("patient_generate_list_btn")
+                                        ) {
+                                            Icon(Icons.Rounded.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("Gerar Lista")
+                                        }
+                                        FilledTonalButton(
+                                            onClick = onApplySavedExerciseList,
+                                            enabled = totalExerciseListsCount > 0,
+                                            modifier = Modifier.weight(1f).testTag("patient_apply_list_btn")
+                                        ) {
+                                            Icon(Icons.Rounded.PlaylistAddCheck, contentDescription = null, modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("Aplicar Modelo")
+                                        }
+                                    }
+                                }
+                            }
+                        }
+
+                        if (patientExerciseLists.isNotEmpty()) {
+                            item {
+                                Text(
+                                    text = "Listas Vinculadas (${patientExerciseLists.size})",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                            }
+                            items(patientExerciseLists, key = { "plist_${it.id}" }) { customList ->
+                                Card(
+                                    shape = MaterialTheme.shapes.medium,
+                                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Column(
+                                        modifier = Modifier.padding(14.dp),
+                                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                                    ) {
+                                        Text(
+                                            text = customList.title,
+                                            style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = "${customList.items.size} exercício(s) • ${customList.totalWeeklyMinutes} min/sem",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.primary
+                                        )
+                                        if (customList.clinicalObjective.isNotBlank()) {
+                                            Text(
+                                                text = customList.clinicalObjective,
+                                                style = MaterialTheme.typography.bodySmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                            )
+                                        }
+                                        customList.items.forEachIndexed { idx, item ->
+                                            Text(
+                                                text = "${idx + 1}. ${item.title} (${item.durationMinutes} min • ${item.frequencyPerWeek}x/sem)",
+                                                style = MaterialTheme.typography.bodySmall
+                                            )
+                                        }
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .horizontalScroll(rememberScrollState()),
+                                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            FilledTonalButton(onClick = { onApplySpecificList(customList) }) {
+                                                Icon(Icons.Rounded.PlaylistAddCheck, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                Spacer(Modifier.width(4.dp))
+                                                Text("Aplicar")
+                                            }
+                                            OutlinedButton(onClick = { onExportExerciseListPdf(customList) }) {
+                                                Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                Spacer(Modifier.width(4.dp))
+                                                Text("PDF")
+                                            }
+                                            OutlinedButton(onClick = { onShareExerciseList(customList) }) {
+                                                Icon(Icons.Rounded.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                                                Spacer(Modifier.width(4.dp))
+                                                Text("Enviar")
+                                            }
+                                            IconButton(onClick = { onEditExerciseList(customList) }) {
+                                                Icon(Icons.Rounded.Edit, contentDescription = "Editar lista", tint = MaterialTheme.colorScheme.primary)
+                                            }
+                                            IconButton(onClick = { onDeleteExerciseList(customList.id) }) {
+                                                Icon(Icons.Rounded.DeleteOutline, contentDescription = "Excluir lista", tint = MaterialTheme.colorScheme.error)
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -388,6 +583,44 @@ fun PatientDetailScreen(
                         verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
                         item {
+                            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                                Text(
+                                    text = "Período do Relatório",
+                                    style = MaterialTheme.typography.titleMedium
+                                )
+                                Row(
+                                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    ReportTimeframe.entries.forEach { tf ->
+                                        FilterChip(
+                                            selected = reportTimeframe == tf,
+                                            onClick = { reportTimeframe = tf },
+                                            label = { Text(tf.label) },
+                                            modifier = Modifier.testTag("timeframe_chip_${tf.name.lowercase()}")
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        item {
+                            ProgressDeltaCard(sessions = filteredReportSessions)
+                        }
+
+                        item {
+                            VoiceEvolutionChartCard(sessions = filteredReportSessions)
+                        }
+
+                        item {
+                            TmfProgressionChartCard(sessions = filteredReportSessions)
+                        }
+
+                        item {
+                            CategoryPerformanceCard(sessions = filteredReportSessions)
+                        }
+
+                        item {
                             Card(
                                 shape = MaterialTheme.shapes.large,
                                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -408,11 +641,11 @@ fun PatientDetailScreen(
                                         Spacer(Modifier.width(10.dp))
                                         Column {
                                             Text(
-                                                text = "Relatório Clínico em PDF",
+                                                text = "Exportar Relatório Clínico (PDF)",
                                                 style = MaterialTheme.typography.titleLarge
                                             )
                                             Text(
-                                                text = "Pronto para compartilhar com ${patient.guardianName}",
+                                                text = "Período: ${reportTimeframe.label} • ${filteredReportSessions.size} sessões",
                                                 style = MaterialTheme.typography.bodySmall,
                                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
@@ -429,29 +662,46 @@ fun PatientDetailScreen(
                                             verticalArrangement = Arrangement.spacedBy(4.dp)
                                         ) {
                                             Text(
-                                                text = "Conteúdo do documento:",
+                                                text = "Layout profissional incluído no PDF:",
                                                 style = MaterialTheme.typography.labelLarge,
                                                 color = MaterialTheme.colorScheme.primary
                                             )
-                                            Text("• Identificação da profissional (${profile?.crfa?.ifBlank { "CRFa a preencher no Perfil" } ?: "CRFa"})", style = MaterialTheme.typography.bodySmall)
-                                            Text("• Dados do paciente e responsável (${patient.guardianName})", style = MaterialTheme.typography.bodySmall)
-                                            Text("• Indicadores de Clareza, Estabilidade, Conforto e TMF", style = MaterialTheme.typography.bodySmall)
-                                            Text("• Gráfico vetorial da curva de evolução (${sessions.size} sessões)", style = MaterialTheme.typography.bodySmall)
-                                            Text("• Plano de exercícios ativos e orientações para casa", style = MaterialTheme.typography.bodySmall)
+                                            Text("• Cabeçalho clínico com identificação (${profile?.crfa?.ifBlank { "CRFa no Perfil" } ?: "CRFa"})", style = MaterialTheme.typography.bodySmall)
+                                            Text("• KPIs de evolução (Clareza, Estabilidade, TMF e delta inicial)", style = MaterialTheme.typography.bodySmall)
+                                            Text("• Dois gráficos vetoriais: Curva Vocal e Barras de TMF", style = MaterialTheme.typography.bodySmall)
+                                            Text("• Exercícios ativos, histórico completo e campo de assinatura", style = MaterialTheme.typography.bodySmall)
                                         }
                                     }
 
-                                    Button(
-                                        onClick = onExportPdf,
-                                        shape = RoundedCornerShape(14.dp),
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .height(50.dp)
-                                            .testTag("export_pdf_button")
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.spacedBy(10.dp)
                                     ) {
-                                        Icon(Icons.Rounded.PictureAsPdf, contentDescription = null)
-                                        Spacer(Modifier.width(8.dp))
-                                        Text("Exportar e Compartilhar PDF")
+                                        FilledTonalButton(
+                                            onClick = { onPreviewPdf(reportTimeframe, filteredReportSessions) },
+                                            shape = RoundedCornerShape(14.dp),
+                                            modifier = Modifier
+                                                .weight(1f)
+                                                .height(50.dp)
+                                                .testTag("preview_pdf_button")
+                                        ) {
+                                            Icon(Icons.Rounded.Visibility, contentDescription = null, modifier = Modifier.size(18.dp))
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("Visualizar")
+                                        }
+
+                                        Button(
+                                            onClick = { onExportPdf(reportTimeframe, filteredReportSessions) },
+                                            shape = RoundedCornerShape(14.dp),
+                                            modifier = Modifier
+                                                .weight(1.3f)
+                                                .height(50.dp)
+                                                .testTag("export_pdf_button")
+                                        ) {
+                                            Icon(Icons.Rounded.PictureAsPdf, contentDescription = null, modifier = Modifier.size(18.dp))
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("Exportar PDF")
+                                        }
                                     }
 
                                     OutlinedButton(
@@ -642,5 +892,142 @@ private fun MetricChip(text: String) {
             style = MaterialTheme.typography.labelSmall,
             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
         )
+    }
+}
+
+@Composable
+private fun PatientAccessCodeCard(
+    activeAccessCode: PatientAccessCode?,
+    isBusy: Boolean,
+    onGenerate: () -> Unit,
+    onRevoke: (String) -> Unit,
+    onShare: (String) -> Unit,
+    onCopy: (String) -> Unit
+) {
+    Card(
+        shape = MaterialTheme.shapes.medium,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Surface(
+                    color = MaterialTheme.colorScheme.primaryContainer,
+                    shape = RoundedCornerShape(10.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.VpnKey,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                        modifier = Modifier.padding(8.dp).size(20.dp)
+                    )
+                }
+                Spacer(Modifier.width(10.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "Código de Acesso do Paciente",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "O paciente só acessa o portal no app após inserir este código.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            if (activeAccessCode != null) {
+                Surface(
+                    color = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = activeAccessCode.code,
+                            style = MaterialTheme.typography.headlineSmall.copy(
+                                letterSpacing = 2.sp,
+                                fontWeight = FontWeight.Bold
+                            ),
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.testTag("active_patient_access_code")
+                        )
+                        Surface(
+                            color = MaterialTheme.colorScheme.surface,
+                            shape = RoundedCornerShape(50)
+                        ) {
+                            Text(
+                                text = if (activeAccessCode.redeemedByUid.isNotBlank()) "Ativado" else "Aguardando uso",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                }
+
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = { onShare(activeAccessCode.code) },
+                        modifier = Modifier.testTag("share_patient_code_btn")
+                    ) {
+                        Icon(Icons.Rounded.Send, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Enviar")
+                    }
+                    FilledTonalButton(
+                        onClick = { onCopy(activeAccessCode.code) },
+                        modifier = Modifier.testTag("copy_patient_code_btn")
+                    ) {
+                        Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(Modifier.width(6.dp))
+                        Text("Copiar")
+                    }
+                    OutlinedButton(
+                        onClick = onGenerate,
+                        enabled = !isBusy,
+                        modifier = Modifier.testTag("generate_patient_code_btn")
+                    ) {
+                        Text("Novo Código")
+                    }
+                    OutlinedButton(
+                        onClick = { onRevoke(activeAccessCode.code) },
+                        enabled = !isBusy,
+                        modifier = Modifier.testTag("revoke_patient_code_btn")
+                    ) {
+                        Text("Desativar", color = MaterialTheme.colorScheme.error)
+                    }
+                }
+            } else {
+                Button(
+                    onClick = onGenerate,
+                    enabled = !isBusy,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(48.dp)
+                        .testTag("generate_patient_code_btn")
+                ) {
+                    Icon(Icons.Rounded.VpnKey, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("Gerar Código Exclusivo de Acesso")
+                }
+            }
+        }
     }
 }

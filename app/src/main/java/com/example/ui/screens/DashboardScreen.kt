@@ -66,6 +66,7 @@ fun DashboardScreen(
     fallbackName: String,
     onOpenPatient: (String) -> Unit,
     onOpenPatientsTab: () -> Unit,
+    onOpenReportsTab: () -> Unit,
     onOpenAgendaTab: () -> Unit,
     onAddPatientClick: () -> Unit,
     onScheduleAppointmentClick: () -> Unit,
@@ -196,7 +197,7 @@ fun DashboardScreen(
                         value = if (data.sessions.isEmpty()) "—" else "$avgClarity%",
                         accent = MaterialTheme.colorScheme.tertiary,
                         modifier = Modifier.weight(1f),
-                        onClick = onOpenPatientsTab
+                        onClick = onOpenReportsTab
                     )
                 }
             }
