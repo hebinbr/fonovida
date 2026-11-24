@@ -74,6 +74,7 @@ import com.example.pdf.ClinicalPdfExporter
 import com.example.ui.components.EditProfileDialog
 import com.example.ui.components.ExerciseListBuilderDialog
 import com.example.ui.components.LogSessionDialog
+import com.example.ui.components.PatientAccessCodesDialog
 import com.example.ui.components.PatientFormDialog
 import com.example.ui.components.PickListForPatientDialog
 import com.example.ui.components.PickPatientForListDialog
@@ -168,6 +169,7 @@ fun FonoAuthenticatedShell(
     var listPreselectedPatient by remember { mutableStateOf<Patient?>(null) }
     var pickingPatientForList by remember { mutableStateOf<CustomExerciseList?>(null) }
     var pickingListForPatient by remember { mutableStateOf<Patient?>(null) }
+    var showAccessCodesDialog by remember { mutableStateOf(false) }
 
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -327,6 +329,9 @@ fun FonoAuthenticatedShell(
                                                 showScheduleDialog = true
                                             }
                                         },
+                                        onOpenAccessCodes = {
+                                            showAccessCodesDialog = true
+                                        },
                                         onSendAppointmentReminder = { appt ->
                                             viewModel.dispatchGuardianAppointmentReminder(
                                                 context = context,
@@ -359,6 +364,27 @@ fun FonoAuthenticatedShell(
                                         onAddPatientClick = {
                                             editingPatient = null
                                             showPatientDialog = true
+                                        },
+                                        onGenerateAccessCode = { pat ->
+                                            viewModel.generatePatientAccessCode(
+                                                patient = pat,
+                                                data = data,
+                                                fallbackName = fallbackName
+                                            )
+                                        },
+                                        onCopyAccessCode = { code ->
+                                            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                            clipboard?.setPrimaryClip(ClipData.newPlainText("Código FonoVida", code))
+                                            viewModel.notifyMessage("Código $code copiado!")
+                                        },
+                                        onShareAccessCode = { pat, code ->
+                                            viewModel.dispatchAccessCodeShare(
+                                                context = context,
+                                                patient = pat,
+                                                code = code,
+                                                therapistName = therapistDisplay,
+                                                clinicName = data.profile?.clinicName ?: ""
+                                            )
                                         }
                                     )
                                 }
@@ -878,6 +904,43 @@ fun FonoAuthenticatedShell(
                                             list = list,
                                             onSuccess = { pickingListForPatient = null }
                                         )
+                                    }
+                                )
+                            }
+
+                            if (showAccessCodesDialog) {
+                                PatientAccessCodesDialog(
+                                    patients = data.patients,
+                                    accessCodes = data.accessCodes,
+                                    isBusy = isBusy,
+                                    onDismiss = { showAccessCodesDialog = false },
+                                    onAddPatient = {
+                                        editingPatient = null
+                                        showPatientDialog = true
+                                    },
+                                    onGenerateCode = { pat ->
+                                        viewModel.generatePatientAccessCode(
+                                            patient = pat,
+                                            data = data,
+                                            fallbackName = fallbackName
+                                        )
+                                    },
+                                    onCopyCode = { code ->
+                                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+                                        clipboard?.setPrimaryClip(ClipData.newPlainText("Código FonoVida", code))
+                                        viewModel.notifyMessage("Código $code copiado!")
+                                    },
+                                    onShareCode = { pat, code ->
+                                        viewModel.dispatchAccessCodeShare(
+                                            context = context,
+                                            patient = pat,
+                                            code = code,
+                                            therapistName = therapistDisplay,
+                                            clinicName = data.profile?.clinicName ?: ""
+                                        )
+                                    },
+                                    onRevokeCode = { code ->
+                                        viewModel.revokePatientAccessCode(code)
                                     }
                                 )
                             }

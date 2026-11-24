@@ -952,7 +952,7 @@ class FonoRepository(
                 "therapistName" to therapistName.trim().ifBlank { "Fonoaudióloga" }.take(100),
                 "clinicName" to clinicName.trim().take(100),
                 "patientId" to patient.id,
-                "patientName" to patient.fullName.trim().take(100),
+                "patientName" to patient.fullName.trim().ifBlank { "Paciente" }.take(100),
                 "clinicalFocus" to patient.clinicalFocus.trim().take(120),
                 "weeklyGoalMinutes" to patient.weeklyGoalMinutes.coerceIn(10L, 1000L),
                 "active" to true,
@@ -1022,7 +1022,7 @@ class FonoRepository(
             val updates = mapOf(
                 "therapistName" to therapistName.trim().ifBlank { "Fonoaudióloga" }.take(100),
                 "clinicName" to clinicName.trim().take(100),
-                "patientName" to patient.fullName.trim().take(100),
+                "patientName" to patient.fullName.trim().ifBlank { "Paciente" }.take(100),
                 "clinicalFocus" to patient.clinicalFocus.trim().take(120),
                 "weeklyGoalMinutes" to patient.weeklyGoalMinutes.coerceIn(10L, 1000L),
                 "exercisesSnapshot" to buildExerciseSnapshotMaps(exercises, patientLists),

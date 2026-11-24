@@ -23,22 +23,27 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.FormatListBulleted
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.VpnKey
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -71,7 +76,10 @@ fun PatientsScreen(
     exerciseListsCount: Int = 0,
     onOpenExerciseLists: () -> Unit = {},
     onPatientClick: (String) -> Unit,
-    onAddPatientClick: () -> Unit
+    onAddPatientClick: () -> Unit,
+    onGenerateAccessCode: (Patient) -> Unit = {},
+    onCopyAccessCode: (String) -> Unit = {},
+    onShareAccessCode: (Patient, String) -> Unit = { _, _ -> }
 ) {
     var searchQuery by remember { mutableStateOf("") }
     var selectedFilter by remember { mutableStateOf<PatientStatus?>(null) }
@@ -280,7 +288,10 @@ fun PatientsScreen(
                             weeklyMinutes = weeklyMinutes.toInt(),
                             goalProgress = goalProgress,
                             activeCode = activeCode,
-                            onClick = { onPatientClick(patient.id) }
+                            onClick = { onPatientClick(patient.id) },
+                            onGenerateCode = { onGenerateAccessCode(patient) },
+                            onCopyCode = { code -> onCopyAccessCode(code) },
+                            onShareCode = { code -> onShareAccessCode(patient, code) }
                         )
                     }
                 }
@@ -297,7 +308,10 @@ private fun PatientSummaryCard(
     weeklyMinutes: Int,
     goalProgress: Float,
     activeCode: String? = null,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    onGenerateCode: () -> Unit,
+    onCopyCode: (String) -> Unit,
+    onShareCode: (String) -> Unit
 ) {
     Card(
         shape = MaterialTheme.shapes.large,
@@ -349,28 +363,73 @@ private fun PatientSummaryCard(
 
             if (!activeCode.isNullOrBlank()) {
                 Spacer(modifier = Modifier.height(8.dp))
-                Surface(
-                    color = MaterialTheme.colorScheme.secondaryContainer,
-                    shape = RoundedCornerShape(8.dp)
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                    Surface(
+                        color = MaterialTheme.colorScheme.secondaryContainer,
+                        shape = RoundedCornerShape(8.dp)
                     ) {
-                        Icon(
-                            imageVector = Icons.Rounded.VpnKey,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                            modifier = Modifier.size(14.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = "Código de acesso: $activeCode",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer
-                        )
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.VpnKey,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                                modifier = Modifier.size(14.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "Código: $activeCode",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer
+                            )
+                        }
                     }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = { onCopyCode(activeCode) },
+                            modifier = Modifier.testTag("copy_code_card_${patient.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.ContentCopy,
+                                contentDescription = "Copiar código $activeCode",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                        IconButton(
+                            onClick = { onShareCode(activeCode) },
+                            modifier = Modifier.testTag("share_code_card_${patient.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Rounded.Send,
+                                contentDescription = "Enviar código $activeCode",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+            } else {
+                Spacer(modifier = Modifier.height(8.dp))
+                TextButton(
+                    onClick = onGenerateCode,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    modifier = Modifier.testTag("generate_code_card_${patient.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.VpnKey,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp)
+                    )
+                    Spacer(Modifier.width(6.dp))
+                    Text("Gerar Código de Acesso")
                 }
             }
 

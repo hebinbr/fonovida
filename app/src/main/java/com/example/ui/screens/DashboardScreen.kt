@@ -28,6 +28,7 @@ import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.PeopleOutline
 import androidx.compose.material.icons.rounded.Send
+import androidx.compose.material.icons.rounded.VpnKey
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
@@ -70,6 +71,7 @@ fun DashboardScreen(
     onOpenAgendaTab: () -> Unit,
     onAddPatientClick: () -> Unit,
     onScheduleAppointmentClick: () -> Unit,
+    onOpenAccessCodes: () -> Unit = {},
     onSendAppointmentReminder: (Appointment) -> Unit,
     onConfirmAppointment: (Appointment) -> Unit
 ) {
@@ -199,6 +201,70 @@ fun DashboardScreen(
                         modifier = Modifier.weight(1f),
                         onClick = onOpenReportsTab
                     )
+                }
+            }
+
+            // Patient Access Code Quick Card
+            item {
+                val activeCodesCount = remember(data.accessCodes) {
+                    data.accessCodes.count { it.active }
+                }
+                Card(
+                    shape = MaterialTheme.shapes.medium,
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.65f)
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onOpenAccessCodes() }
+                        .testTag("dashboard_generate_code_btn")
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.weight(1f)
+                        ) {
+                            Surface(
+                                color = MaterialTheme.colorScheme.secondary,
+                                shape = RoundedCornerShape(12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.VpnKey,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSecondary,
+                                    modifier = Modifier.padding(9.dp).size(20.dp)
+                                )
+                            }
+                            Spacer(Modifier.width(12.dp))
+                            Column {
+                                Text(
+                                    text = "Códigos de Acesso do Paciente",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Bold
+                                )
+                                Text(
+                                    text = if (activeCodesCount == 0) {
+                                        "Gere um código exclusivo para liberar o app ao paciente"
+                                    } else {
+                                        "$activeCodesCount código(s) ativo(s) • Gerar, copiar ou enviar"
+                                    },
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Rounded.ArrowForward,
+                            contentDescription = "Gerar código de acesso",
+                            tint = MaterialTheme.colorScheme.secondary
+                        )
+                    }
                 }
             }
 

@@ -52,12 +52,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
+import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.Send
+import androidx.compose.material.icons.rounded.VpnKey
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.sp
 import com.example.data.model.Appointment
 import com.example.data.model.AppointmentType
 import com.example.data.model.CuratedProtocolPresets
@@ -66,6 +70,7 @@ import com.example.data.model.CustomExerciseList
 import com.example.data.model.ExerciseCategory
 import com.example.data.model.ExerciseListItem
 import com.example.data.model.Patient
+import com.example.data.model.PatientAccessCode
 import com.example.data.model.PatientStatus
 import com.example.data.model.SlotBlock
 import com.example.data.model.TherapistProfile
@@ -1680,4 +1685,188 @@ fun PickListForPatientDialog(
         }
     )
 }
+
+@Composable
+fun PatientAccessCodesDialog(
+    patients: List<Patient>,
+    accessCodes: List<PatientAccessCode>,
+    isBusy: Boolean,
+    onDismiss: () -> Unit,
+    onAddPatient: () -> Unit,
+    onGenerateCode: (Patient) -> Unit,
+    onCopyCode: (String) -> Unit,
+    onShareCode: (Patient, String) -> Unit,
+    onRevokeCode: (String) -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = { if (!isBusy) onDismiss() },
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Rounded.VpnKey,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Column {
+                    Text("Códigos de Acesso", style = MaterialTheme.typography.titleLarge)
+                    Text(
+                        text = "Gere um código exclusivo para cada paciente entrar no app",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+        },
+        text = {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
+                if (patients.isEmpty()) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                        shape = RoundedCornerShape(12.dp),
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Column(
+                            modifier = Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Text(
+                                text = "Nenhum paciente cadastrado ainda",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold
+                            )
+                            Text(
+                                text = "Cadastre um paciente primeiro para gerar o código exclusivo de acesso ao portal.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Button(
+                                onClick = {
+                                    onDismiss()
+                                    onAddPatient()
+                                },
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text("Cadastrar Paciente")
+                            }
+                        }
+                    }
+                } else {
+                    patients.forEach { patient ->
+                        val activeCode = accessCodes.firstOrNull {
+                            it.patientId == patient.id && it.active
+                        }
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                            shape = RoundedCornerShape(14.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Column(
+                                modifier = Modifier.padding(12.dp),
+                                verticalArrangement = Arrangement.spacedBy(8.dp)
+                            ) {
+                                Row(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Column(modifier = Modifier.weight(1f)) {
+                                        Text(
+                                            text = patient.fullName,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold
+                                        )
+                                        Text(
+                                            text = patient.clinicalFocus,
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
+                                    if (activeCode != null) {
+                                        Surface(
+                                            color = MaterialTheme.colorScheme.primaryContainer,
+                                            shape = RoundedCornerShape(8.dp)
+                                        ) {
+                                            Text(
+                                                text = activeCode.code,
+                                                style = MaterialTheme.typography.labelLarge.copy(
+                                                    letterSpacing = 1.5.sp,
+                                                    fontWeight = FontWeight.Bold
+                                                ),
+                                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                                            )
+                                        }
+                                    }
+                                }
+
+                                if (activeCode != null) {
+                                    Row(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .horizontalScroll(rememberScrollState()),
+                                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    ) {
+                                        FilledTonalButton(
+                                            onClick = { onCopyCode(activeCode.code) },
+                                            enabled = !isBusy
+                                        ) {
+                                            Icon(Icons.Rounded.ContentCopy, contentDescription = null, modifier = Modifier.size(15.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("Copiar")
+                                        }
+                                        Button(
+                                            onClick = { onShareCode(patient, activeCode.code) },
+                                            enabled = !isBusy
+                                        ) {
+                                            Icon(Icons.Rounded.Send, contentDescription = null, modifier = Modifier.size(15.dp))
+                                            Spacer(Modifier.width(4.dp))
+                                            Text("Enviar")
+                                        }
+                                        OutlinedButton(
+                                            onClick = { onGenerateCode(patient) },
+                                            enabled = !isBusy,
+                                            modifier = Modifier.testTag("dialog_generate_code_${patient.id}")
+                                        ) {
+                                            Text("Novo")
+                                        }
+                                        OutlinedButton(
+                                            onClick = { onRevokeCode(activeCode.code) },
+                                            enabled = !isBusy
+                                        ) {
+                                            Text("Desativar", color = MaterialTheme.colorScheme.error)
+                                        }
+                                    }
+                                } else {
+                                    Button(
+                                        onClick = { onGenerateCode(patient) },
+                                        enabled = !isBusy,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .testTag("dialog_generate_code_${patient.id}")
+                                    ) {
+                                        Icon(Icons.Rounded.VpnKey, contentDescription = null, modifier = Modifier.size(16.dp))
+                                        Spacer(Modifier.width(6.dp))
+                                        Text(if (isBusy) "Gerando..." else "Gerar Código de Acesso")
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {},
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isBusy) { Text("Fechar") }
+        }
+    )
+}
+
 
