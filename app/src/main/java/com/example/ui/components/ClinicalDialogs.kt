@@ -47,6 +47,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
@@ -54,13 +56,18 @@ import androidx.compose.material.icons.rounded.ArrowDownward
 import androidx.compose.material.icons.rounded.ArrowUpward
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.DeleteOutline
+import androidx.compose.material.icons.rounded.RestartAlt
 import androidx.compose.material.icons.rounded.Send
 import androidx.compose.material.icons.rounded.VpnKey
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.Surface
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.unit.sp
 import com.example.data.model.Appointment
 import com.example.data.model.AppointmentType
@@ -74,6 +81,8 @@ import com.example.data.model.PatientAccessCode
 import com.example.data.model.PatientStatus
 import com.example.data.model.SlotBlock
 import com.example.data.model.TherapistProfile
+import com.example.notifications.AppointmentReminderTemplateDefaults
+import com.example.notifications.ReminderScheduler
 import com.example.ui.theme.StatusDanger
 import com.example.ui.theme.StatusDangerBg
 import java.text.SimpleDateFormat
@@ -884,7 +893,7 @@ fun ScheduleAppointmentDialog(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text("Lembrete para Paciente / Resp.", style = MaterialTheme.typography.bodyMedium)
                                 Text(
-                                    "Aviso programado de confirmação",
+                                    "Notificação automática + envio no WhatsApp (wa.me)",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
@@ -1091,6 +1100,7 @@ fun BlockSlotDialog(
     )
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun EditProfileDialog(
     profile: TherapistProfile?,
@@ -1102,7 +1112,8 @@ fun EditProfileDialog(
         crfa: String,
         clinicName: String,
         defaultReminderMinutes: Long,
-        autoRemindersEnabled: Boolean
+        autoRemindersEnabled: Boolean,
+        customReminderTemplate: String
     ) -> Unit
 ) {
     var displayName by remember { mutableStateOf(profile?.displayName?.ifBlank { fallbackName } ?: fallbackName) }
@@ -1110,6 +1121,42 @@ fun EditProfileDialog(
     var clinicName by remember { mutableStateOf(profile?.clinicName ?: "Consultório de Fonoaudiologia") }
     var defaultLead by remember { mutableLongStateOf(profile?.defaultReminderMinutes ?: 60L) }
     var autoReminders by remember { mutableStateOf(profile?.autoRemindersEnabled ?: true) }
+    val initialTemplate = profile?.customReminderTemplate ?: ""
+    var customTemplateValue by remember {
+        mutableStateOf(
+            TextFieldValue(
+                text = initialTemplate,
+                selection = TextRange(initialTemplate.length)
+            )
+        )
+    }
+
+    fun insertVariableToken(token: String) {
+        val current = customTemplateValue
+        val baseText = current.text.ifBlank { "" }
+        val start = current.selection.start.coerceIn(0, baseText.length)
+        val end = current.selection.end.coerceIn(0, baseText.length)
+        val needsLeadingSpace = start > 0 && !baseText[start - 1].isWhitespace()
+        val insertion = if (needsLeadingSpace) " $token" else token
+        val updated = buildString {
+            append(baseText.substring(0, start))
+            append(insertion)
+            append(baseText.substring(end))
+        }.take(1000)
+        val newCursor = (start + insertion.length).coerceAtMost(updated.length)
+        customTemplateValue = TextFieldValue(
+            text = updated,
+            selection = TextRange(newCursor)
+        )
+    }
+
+    val previewText = remember(customTemplateValue.text, displayName, clinicName) {
+        ReminderScheduler.renderAppointmentTemplatePreview(
+            template = customTemplateValue.text,
+            therapistName = displayName.ifBlank { fallbackName },
+            clinicName = clinicName
+        )
+    }
 
     AlertDialog(
         onDismissRequest = { if (!isBusy) onDismiss() },
@@ -1126,21 +1173,21 @@ fun EditProfileDialog(
                     onValueChange = { displayName = it },
                     label = { Text("Nome da Fonoaudióloga *") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().testTag("profile_display_name_input")
                 )
                 OutlinedTextField(
                     value = crfa,
                     onValueChange = { crfa = it },
                     label = { Text("Registro CRFa (ex.: CRFa 2-19402)") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().testTag("profile_crfa_input")
                 )
                 OutlinedTextField(
                     value = clinicName,
                     onValueChange = { clinicName = it },
                     label = { Text("Clínica / Consultório") },
                     singleLine = true,
-                    modifier = Modifier.fillMaxWidth()
+                    modifier = Modifier.fillMaxWidth().testTag("profile_clinic_name_input")
                 )
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -1148,7 +1195,11 @@ fun EditProfileDialog(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text("Lembretes automáticos", style = MaterialTheme.typography.bodyMedium)
-                    Switch(checked = autoReminders, onCheckedChange = { autoReminders = it })
+                    Switch(
+                        checked = autoReminders,
+                        onCheckedChange = { autoReminders = it },
+                        modifier = Modifier.testTag("profile_auto_reminders_switch")
+                    )
                 }
                 Text("Antecedência padrão", style = MaterialTheme.typography.labelMedium)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1160,16 +1211,131 @@ fun EditProfileDialog(
                         )
                     }
                 }
+
+                HorizontalDivider(modifier = Modifier.padding(vertical = 4.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "Mensagem padrão de lembrete de consulta",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    TextButton(
+                        onClick = {
+                            val nextText = if (customTemplateValue.text.isBlank()) {
+                                AppointmentReminderTemplateDefaults.DEFAULT_TEMPLATE
+                            } else {
+                                ""
+                            }
+                            customTemplateValue = TextFieldValue(
+                                text = nextText,
+                                selection = TextRange(nextText.length)
+                            )
+                        },
+                        modifier = Modifier.testTag("reset_reminder_template_btn")
+                    ) {
+                        Icon(
+                            Icons.Rounded.RestartAlt,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(
+                            if (customTemplateValue.text.isBlank()) "Editar modelo" else "Restaurar padrão"
+                        )
+                    }
+                }
+
+                Text(
+                    text = "Toque nas variáveis para inserir automaticamente o nome do paciente e data/hora da sessão:",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                FlowRow(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    AppointmentReminderTemplateDefaults.availableVariables.forEach { (token, desc) ->
+                        val safeTag = token.trim('{', '}')
+                        AssistChip(
+                            onClick = { insertVariableToken(token) },
+                            label = { Text("$token • $desc", style = MaterialTheme.typography.labelSmall) },
+                            modifier = Modifier.testTag("insert_var_$safeTag")
+                        )
+                    }
+                }
+
+                OutlinedTextField(
+                    value = customTemplateValue,
+                    onValueChange = { next ->
+                        if (next.text.length <= 1000) {
+                            customTemplateValue = next
+                        }
+                    },
+                    label = { Text("Texto personalizado do lembrete") },
+                    placeholder = {
+                        Text(
+                            "Deixe em branco para usar o modelo padrão do FonoVida...",
+                            style = MaterialTheme.typography.bodySmall
+                        )
+                    },
+                    minLines = 3,
+                    maxLines = 6,
+                    supportingText = {
+                        Text("${customTemplateValue.text.length}/1000 caracteres")
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("profile_custom_reminder_template_input")
+                )
+
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(10.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)
+                    ) {
+                        Text(
+                            text = "Pré-visualização (exemplo de WhatsApp e notificação)",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = previewText,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
         },
         confirmButton = {
             Button(
                 onClick = {
                     if (displayName.trim().isNotEmpty()) {
-                        onConfirm(displayName, crfa, clinicName, defaultLead, autoReminders)
+                        onConfirm(
+                            displayName,
+                            crfa,
+                            clinicName,
+                            defaultLead,
+                            autoReminders,
+                            customTemplateValue.text.trim().take(1000)
+                        )
                     }
                 },
-                enabled = !isBusy
+                enabled = !isBusy,
+                modifier = Modifier.testTag("save_profile_button")
             ) { Text("Salvar") }
         },
         dismissButton = {

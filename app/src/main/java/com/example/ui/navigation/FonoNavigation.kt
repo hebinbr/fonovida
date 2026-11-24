@@ -81,6 +81,7 @@ import com.example.ui.components.PickPatientForListDialog
 import com.example.ui.components.PrescribeExerciseDialog
 import com.example.ui.components.ScheduleAppointmentDialog
 import com.example.ui.screens.AgendaScreen
+import com.example.ui.screens.ClinicalSheetScreen
 import com.example.ui.screens.DashboardScreen
 import com.example.ui.screens.ExerciseListsScreen
 import com.example.ui.screens.PatientDetailScreen
@@ -100,6 +101,9 @@ data object RoutePatients
 
 @Serializable
 data class RoutePatientDetail(val patientId: String)
+
+@Serializable
+data class RoutePatientClinicalSheet(val patientId: String)
 
 @Serializable
 data object RouteReports
@@ -126,12 +130,21 @@ fun FonoAuthenticatedShell(
     viewModel: FonoViewModel,
     fallbackName: String,
     fallbackEmail: String,
+    pendingNotificationApptId: String = "",
+    onConsumeNotificationApptId: () -> Unit = {},
     onSwitchToPatientMode: () -> Unit = {},
     onSignedOut: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val credentialManager = remember { CredentialManager.create(context) }
+
+    LaunchedEffect(pendingNotificationApptId) {
+        if (pendingNotificationApptId.isNotBlank()) {
+            viewModel.markAppointmentReminderSent(pendingNotificationApptId)
+            onConsumeNotificationApptId()
+        }
+    }
 
     val clinicState by viewModel.clinicState.collectAsStateWithLifecycle()
     val isBusy by viewModel.isBusy.collectAsStateWithLifecycle()
@@ -170,6 +183,7 @@ fun FonoAuthenticatedShell(
     var pickingPatientForList by remember { mutableStateOf<CustomExerciseList?>(null) }
     var pickingListForPatient by remember { mutableStateOf<Patient?>(null) }
     var showAccessCodesDialog by remember { mutableStateOf(false) }
+    var confirmWhatsAppTarget by remember { mutableStateOf<com.example.data.model.Appointment?>(null) }
 
     val navController = rememberNavController()
     val navBackStackEntry by navController.currentBackStackEntryAsState()
@@ -186,6 +200,7 @@ fun FonoAuthenticatedShell(
     }
 
     val isDetailRoute = currentDestination?.hasRoute<RoutePatientDetail>() == true ||
+        currentDestination?.hasRoute<RoutePatientClinicalSheet>() == true ||
         currentDestination?.hasRoute<RouteExerciseLists>() == true
 
     fun navigateTopLevel(route: Any) {
@@ -300,6 +315,25 @@ fun FonoAuthenticatedShell(
                         is UiState.Success<ClinicData> -> {
                             val data = state.data
                             val therapistDisplay = data.profile?.displayName?.ifBlank { fallbackName } ?: fallbackName
+                            val clinicDisplay = data.profile?.clinicName.orEmpty()
+                            val customReminderTemplate = data.profile?.customReminderTemplate.orEmpty()
+
+                            LaunchedEffect(
+                                data.patients,
+                                data.appointments,
+                                therapistDisplay,
+                                clinicDisplay,
+                                customReminderTemplate
+                            ) {
+                                ReminderScheduler.syncTherapistReminders(
+                                    context = context,
+                                    patients = data.patients,
+                                    appointments = data.appointments,
+                                    therapistName = therapistDisplay,
+                                    customReminderTemplate = customReminderTemplate,
+                                    clinicName = clinicDisplay
+                                )
+                            }
 
                             NavHost(
                                 navController = navController,
@@ -336,7 +370,9 @@ fun FonoAuthenticatedShell(
                                             viewModel.dispatchGuardianAppointmentReminder(
                                                 context = context,
                                                 appointment = appt,
-                                                therapistName = therapistDisplay
+                                                therapistName = therapistDisplay,
+                                                customTemplate = customReminderTemplate,
+                                                clinicName = clinicDisplay
                                             )
                                         },
                                         onConfirmAppointment = { appt ->
@@ -345,6 +381,7 @@ fun FonoAuthenticatedShell(
                                                 appointment = appt,
                                                 newStatus = com.example.data.model.AppointmentStatus.CONFIRMADA
                                             )
+                                            confirmWhatsAppTarget = appt
                                         }
                                     )
                                 }
@@ -360,6 +397,9 @@ fun FonoAuthenticatedShell(
                                         },
                                         onPatientClick = { pid ->
                                             navController.navigate(RoutePatientDetail(pid))
+                                        },
+                                        onOpenClinicalSheet = { pid ->
+                                            navController.navigate(RoutePatientClinicalSheet(pid))
                                         },
                                         onAddPatientClick = {
                                             editingPatient = null
@@ -511,6 +551,9 @@ fun FonoAuthenticatedShell(
                                             activeAccessCode = activeAccessCode,
                                             isAccessCodeBusy = isBusy,
                                             onBack = { navController.popBackStack() },
+                                            onOpenClinicalSheet = {
+                                                navController.navigate(RoutePatientClinicalSheet(patient.id))
+                                            },
                                             onEditPatient = {
                                                 editingPatient = patient
                                                 showPatientDialog = true
@@ -640,6 +683,30 @@ fun FonoAuthenticatedShell(
                                     }
                                 }
 
+                                composable<RoutePatientClinicalSheet> { entry ->
+                                    val route = entry.toRoute<RoutePatientClinicalSheet>()
+                                    val patient = data.patients.firstOrNull { it.id == route.patientId }
+                                    if (patient == null) {
+                                        LaunchedEffect(Unit) {
+                                            navController.popBackStack()
+                                        }
+                                    } else {
+                                        ClinicalSheetScreen(
+                                            patient = patient,
+                                            isBusy = isBusy,
+                                            onBack = { navController.popBackStack() },
+                                            onSave = { medHistory, complaints, goals ->
+                                                viewModel.saveClinicalSheet(
+                                                    patientId = patient.id,
+                                                    medicalHistory = medHistory,
+                                                    mainComplaints = complaints,
+                                                    therapeuticGoals = goals
+                                                )
+                                            }
+                                        )
+                                    }
+                                }
+
                                 composable<RouteAgenda> {
                                     AgendaScreen(
                                         appointments = data.appointments,
@@ -683,12 +750,17 @@ fun FonoAuthenticatedShell(
                                         },
                                         onUpdateStatus = { appt, st ->
                                             viewModel.updateAppointmentStatus(context, appt, st)
+                                            if (st == com.example.data.model.AppointmentStatus.CONFIRMADA) {
+                                                confirmWhatsAppTarget = appt
+                                            }
                                         },
                                         onSendGuardianReminder = { appt ->
                                             viewModel.dispatchGuardianAppointmentReminder(
                                                 context = context,
                                                 appointment = appt,
-                                                therapistName = therapistDisplay
+                                                therapistName = therapistDisplay,
+                                                customTemplate = customReminderTemplate,
+                                                clinicName = clinicDisplay
                                             )
                                         },
                                         onDeleteAppointment = { apptId ->
@@ -834,13 +906,14 @@ fun FonoAuthenticatedShell(
                                     fallbackName = fallbackName,
                                     isBusy = isBusy,
                                     onDismiss = { showEditProfileDialog = false },
-                                    onConfirm = { name, crfa, clinic, lead, autoRem ->
+                                    onConfirm = { name, crfa, clinic, lead, autoRem, customTemplate ->
                                         viewModel.updateTherapistProfile(
                                             displayName = name,
                                             crfa = crfa,
                                             clinicName = clinic,
                                             defaultReminderMinutes = lead,
                                             autoRemindersEnabled = autoRem,
+                                            customReminderTemplate = customTemplate,
                                             onSuccess = { showEditProfileDialog = false }
                                         )
                                     }
@@ -941,6 +1014,42 @@ fun FonoAuthenticatedShell(
                                     },
                                     onRevokeCode = { code ->
                                         viewModel.revokePatientAccessCode(code)
+                                    }
+                                )
+                            }
+
+                            confirmWhatsAppTarget?.let { appt ->
+                                androidx.compose.material3.AlertDialog(
+                                    onDismissRequest = { confirmWhatsAppTarget = null },
+                                    title = { Text("Enviar Confirmação no WhatsApp?") },
+                                    text = {
+                                        val guardian = appt.guardianName.ifBlank { "o responsável" }
+                                        Text(
+                                            text = "Consulta de ${appt.patientName} confirmada! Deseja abrir o WhatsApp (wa.me) para enviar o aviso de confirmação para $guardian?"
+                                        )
+                                    },
+                                    confirmButton = {
+                                        androidx.compose.material3.Button(
+                                            onClick = {
+                                                viewModel.dispatchGuardianConfirmationNotice(
+                                                    context = context,
+                                                    appointment = appt,
+                                                    therapistName = therapistDisplay
+                                                )
+                                                confirmWhatsAppTarget = null
+                                            },
+                                            modifier = Modifier.testTag("confirm_dialog_whatsapp_btn")
+                                        ) {
+                                            Text("Enviar no WhatsApp")
+                                        }
+                                    },
+                                    dismissButton = {
+                                        androidx.compose.material3.TextButton(
+                                            onClick = { confirmWhatsAppTarget = null },
+                                            modifier = Modifier.testTag("confirm_dialog_skip_btn")
+                                        ) {
+                                            Text("Agora não")
+                                        }
                                     }
                                 )
                             }

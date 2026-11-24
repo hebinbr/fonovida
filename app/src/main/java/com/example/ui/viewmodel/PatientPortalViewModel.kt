@@ -1,11 +1,13 @@
 package com.example.ui.viewmodel
 
+import android.content.Context
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.data.AccessSessionStore
 import com.example.data.firebase.FonoRepository
 import com.example.data.model.AccessCodeGenerator
 import com.example.data.model.PatientAccessCode
+import com.example.notifications.ReminderScheduler
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -23,6 +25,12 @@ sealed interface PatientPortalState {
     data object Loading : PatientPortalState
     data class Unlocked(val accessCode: PatientAccessCode) : PatientPortalState
 }
+
+data class PatientReminderSettings(
+    val enabled: Boolean = true,
+    val hour: Int = 18,
+    val minute: Int = 0
+)
 
 class PatientPortalViewModel(
     private val repository: FonoRepository,
@@ -46,6 +54,9 @@ class PatientPortalViewModel(
     )
     val completedToday: StateFlow<Set<String>> = _completedToday.asStateFlow()
 
+    private val _reminderSettings = MutableStateFlow(PatientReminderSettings())
+    val reminderSettings: StateFlow<PatientReminderSettings> = _reminderSettings.asStateFlow()
+
     @OptIn(ExperimentalCoroutinesApi::class)
     val portalState: StateFlow<PatientPortalState> = savedCodeFlow
         .flatMapLatest { code ->
@@ -60,6 +71,20 @@ class PatientPortalViewModel(
                                 _revokedNotice.value = null
                                 val activeCode = accessObj.code.ifBlank { code }
                                 _completedToday.value = accessStore.getCompletedExercisesToday(activeCode)
+                                _reminderSettings.value = PatientReminderSettings(
+                                    enabled = accessStore.getPatientReminderEnabled(
+                                        activeCode,
+                                        accessObj.dailyReminderEnabled
+                                    ),
+                                    hour = accessStore.getPatientReminderHour(
+                                        activeCode,
+                                        accessObj.reminderHour.toInt()
+                                    ),
+                                    minute = accessStore.getPatientReminderMinute(
+                                        activeCode,
+                                        accessObj.reminderMinute.toInt()
+                                    )
+                                )
                                 emit(PatientPortalState.Unlocked(accessObj))
                             } else {
                                 accessStore.setRedeemedCode(currentUserId, null)
@@ -104,6 +129,20 @@ class PatientPortalViewModel(
                 val resolvedCode = accessObj.code.ifBlank { normalized }
                 accessStore.setRedeemedCode(currentUserId, resolvedCode)
                 _completedToday.value = accessStore.getCompletedExercisesToday(resolvedCode)
+                _reminderSettings.value = PatientReminderSettings(
+                    enabled = accessStore.getPatientReminderEnabled(
+                        resolvedCode,
+                        accessObj.dailyReminderEnabled
+                    ),
+                    hour = accessStore.getPatientReminderHour(
+                        resolvedCode,
+                        accessObj.reminderHour.toInt()
+                    ),
+                    minute = accessStore.getPatientReminderMinute(
+                        resolvedCode,
+                        accessObj.reminderMinute.toInt()
+                    )
+                )
                 savedCodeFlow.value = resolvedCode
             }.onFailure { err ->
                 _redeemError.value = err.localizedMessage
@@ -121,7 +160,46 @@ class PatientPortalViewModel(
         _completedToday.value = accessStore.toggleExerciseCompletedToday(code, exerciseKey)
     }
 
-    fun clearCodeAndLock() {
+    fun updateReminderSettings(
+        context: Context,
+        accessCode: PatientAccessCode,
+        enabled: Boolean,
+        hour: Int,
+        minute: Int
+    ) {
+        val safeHour = hour.coerceIn(0, 23)
+        val safeMinute = minute.coerceIn(0, 59)
+        accessStore.savePatientReminderPrefs(accessCode.code, enabled, safeHour, safeMinute)
+        _reminderSettings.value = PatientReminderSettings(enabled, safeHour, safeMinute)
+        ReminderScheduler.syncPatientPortalReminders(
+            context = context,
+            accessCode = accessCode,
+            reminderEnabled = enabled,
+            reminderHour = safeHour,
+            reminderMinute = safeMinute
+        )
+    }
+
+    fun syncReminders(context: Context, accessCode: PatientAccessCode) {
+        val settings = _reminderSettings.value
+        ReminderScheduler.syncPatientPortalReminders(
+            context = context,
+            accessCode = accessCode,
+            reminderEnabled = settings.enabled,
+            reminderHour = settings.hour,
+            reminderMinute = settings.minute
+        )
+    }
+
+    fun sendWorkManagerTestNotification(context: Context, patientName: String) {
+        ReminderScheduler.enqueueImmediateWorkReminderTest(context, patientName)
+    }
+
+    fun clearCodeAndLock(context: Context? = null) {
+        val currentCode = savedCodeFlow.value
+        if (context != null && !currentCode.isNullOrBlank()) {
+            ReminderScheduler.cancelPatientPortalReminders(context, currentCode)
+        }
         accessStore.setRedeemedCode(currentUserId, null)
         _redeemError.value = null
         _revokedNotice.value = null

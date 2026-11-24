@@ -25,6 +25,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ContentCopy
 import androidx.compose.material.icons.rounded.FormatListBulleted
+import androidx.compose.material.icons.rounded.MedicalInformation
 import androidx.compose.material.icons.rounded.NotificationsActive
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.Send
@@ -76,6 +77,7 @@ fun PatientsScreen(
     exerciseListsCount: Int = 0,
     onOpenExerciseLists: () -> Unit = {},
     onPatientClick: (String) -> Unit,
+    onOpenClinicalSheet: (String) -> Unit = {},
     onAddPatientClick: () -> Unit,
     onGenerateAccessCode: (Patient) -> Unit = {},
     onCopyAccessCode: (String) -> Unit = {},
@@ -289,6 +291,7 @@ fun PatientsScreen(
                             goalProgress = goalProgress,
                             activeCode = activeCode,
                             onClick = { onPatientClick(patient.id) },
+                            onOpenClinicalSheet = { onOpenClinicalSheet(patient.id) },
                             onGenerateCode = { onGenerateAccessCode(patient) },
                             onCopyCode = { code -> onCopyAccessCode(code) },
                             onShareCode = { code -> onShareAccessCode(patient, code) }
@@ -309,6 +312,7 @@ private fun PatientSummaryCard(
     goalProgress: Float,
     activeCode: String? = null,
     onClick: () -> Unit,
+    onOpenClinicalSheet: () -> Unit,
     onGenerateCode: () -> Unit,
     onCopyCode: (String) -> Unit,
     onShareCode: (String) -> Unit
@@ -493,6 +497,20 @@ private fun PatientSummaryCard(
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    TextButton(
+                        onClick = onOpenClinicalSheet,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                        modifier = Modifier.testTag("patient_card_clinical_sheet_${patient.id}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.MedicalInformation,
+                            contentDescription = "Abrir ficha clínica de ${patient.fullName}",
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text("Ficha Clínica", style = MaterialTheme.typography.labelMedium)
+                    }
+                    Spacer(Modifier.width(4.dp))
                     Text(
                         text = "Prontuário",
                         style = MaterialTheme.typography.labelMedium,

@@ -23,6 +23,7 @@ import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.DeleteOutline
 import androidx.compose.material.icons.rounded.Edit
 import androidx.compose.material.icons.rounded.GraphicEq
+import androidx.compose.material.icons.rounded.MedicalInformation
 import androidx.compose.material.icons.rounded.PictureAsPdf
 import androidx.compose.material.icons.rounded.PlayArrow
 import androidx.compose.material.icons.rounded.PlaylistAddCheck
@@ -92,6 +93,7 @@ fun PatientDetailScreen(
     activeAccessCode: PatientAccessCode? = null,
     isAccessCodeBusy: Boolean = false,
     onBack: () -> Unit,
+    onOpenClinicalSheet: () -> Unit = {},
     onEditPatient: () -> Unit,
     onDeletePatient: () -> Unit,
     onGenerateAccessCode: () -> Unit = {},
@@ -156,6 +158,16 @@ fun PatientDetailScreen(
                     }
                 },
                 actions = {
+                    IconButton(
+                        onClick = onOpenClinicalSheet,
+                        modifier = Modifier.testTag("topbar_clinical_sheet_btn")
+                    ) {
+                        Icon(
+                            Icons.Rounded.MedicalInformation,
+                            contentDescription = "Ficha clínica",
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                    }
                     IconButton(onClick = onEditPatient, modifier = Modifier.testTag("edit_patient_btn")) {
                         Icon(Icons.Rounded.Edit, contentDescription = "Editar paciente")
                     }
@@ -235,6 +247,12 @@ fun PatientDetailScreen(
                     ) {
                         item {
                             PatientKpiSummaryRow(sessions = sessions)
+                        }
+                        item {
+                            PatientClinicalSheetCard(
+                                patient = patient,
+                                onOpenClinicalSheet = onOpenClinicalSheet
+                            )
                         }
                         item {
                             PatientAccessCodeCard(
@@ -1031,3 +1049,115 @@ private fun PatientAccessCodeCard(
         }
     }
 }
+
+@Composable
+private fun PatientClinicalSheetCard(
+    patient: Patient,
+    onOpenClinicalSheet: () -> Unit
+) {
+    val filledCount = listOf(
+        patient.medicalHistory,
+        patient.mainComplaints,
+        patient.therapeuticGoals
+    ).count { it.isNotBlank() }
+
+    Card(
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.MedicalInformation,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(22.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Column {
+                        Text(
+                            text = "Ficha Clínica do Paciente",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = if (filledCount == 0) {
+                                "Histórico médico, queixas e metas ainda não preenchidos"
+                            } else {
+                                "$filledCount de 3 seções preenchidas"
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            if (patient.hasClinicalSheetContent) {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(12.dp),
+                        verticalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        if (patient.medicalHistory.isNotBlank()) {
+                            Text(
+                                text = "Histórico médico: ${patient.medicalHistory}",
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 2
+                            )
+                        }
+                        if (patient.mainComplaints.isNotBlank()) {
+                            Text(
+                                text = "Queixas principais: ${patient.mainComplaints}",
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 2
+                            )
+                        }
+                        if (patient.therapeuticGoals.isNotBlank()) {
+                            Text(
+                                text = "Metas terapêuticas: ${patient.therapeuticGoals}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary,
+                                maxLines = 2
+                            )
+                        }
+                    }
+                }
+            }
+
+            FilledTonalButton(
+                onClick = onOpenClinicalSheet,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(48.dp)
+                    .testTag("open_clinical_sheet_btn")
+            ) {
+                Icon(Icons.Rounded.Edit, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    if (patient.hasClinicalSheetContent) "Editar Ficha Clínica"
+                    else "Preencher Ficha Clínica"
+                )
+            }
+        }
+    }
+}
+

@@ -2,6 +2,11 @@
     <string name="app_name">FonoVida</string>
     <string name="notification_channel_name">Lembretes Clínicos e Consultas</string>
     <string name="notification_channel_desc">Notificações automáticas de consultas agendadas e prática de exercícios vocais.</string>
+    <string name="notification_channel_exercises_name">Lembretes de Exercícios Vocais</string>
+    <string name="notification_channel_exercises_desc">Alertas diários automáticos para praticar sua rotina de voz mesmo com o app fechado.</string>
+    <string name="notification_channel_appointments_name">Lembretes de Consultas</string>
+    <string name="notification_channel_appointments_desc">Avisos automáticos antes das consultas fonoaudiológicas agendadas.</string>
+    <string name="notification_action_whatsapp">Enviar no WhatsApp</string>
     <string name="sign_in_google">Entrar com Google</string>
     <string name="cd_hero_illustration">Ilustração clínica de ondas vocais e acompanhamento fonoaudiológico</string>
     <string name="cd_empty_patients">Ilustração de prancheta com exercícios de voz</string>

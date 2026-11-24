@@ -884,7 +884,7 @@ private fun AppointmentCard(
                                 )
                                 Spacer(Modifier.width(4.dp))
                                 Text(
-                                    text = "Paciente ${formatLeadTime(appointment.patientReminderLeadMinutes)} antes",
+                                    text = "WhatsApp Resp. ${formatLeadTime(appointment.patientReminderLeadMinutes)} antes",
                                     style = MaterialTheme.typography.labelSmall,
                                     color = MaterialTheme.colorScheme.secondary
                                 )
@@ -897,7 +897,7 @@ private fun AppointmentCard(
             if (appointment.reminderSentMillis > 0L) {
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "Aviso enviado ao responsável em ${sentFmt.format(Date(appointment.reminderSentMillis))}",
+                    text = "Aviso WhatsApp enviado ao responsável em ${sentFmt.format(Date(appointment.reminderSentMillis))}",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -912,11 +912,13 @@ private fun AppointmentCard(
                     OutlinedButton(
                         onClick = onSendReminder,
                         shape = RoundedCornerShape(10.dp),
-                        modifier = Modifier.weight(1f)
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("agenda_whatsapp_reminder_${appointment.id}")
                     ) {
                         Icon(Icons.Rounded.Send, contentDescription = null, modifier = Modifier.size(15.dp))
                         Spacer(Modifier.width(4.dp))
-                        Text("Lembrar", maxLines = 1)
+                        Text("WhatsApp", maxLines = 1)
                     }
 
                     if (appointment.appointmentStatus == AppointmentStatus.AGENDADA) {

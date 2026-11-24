@@ -118,11 +118,20 @@ test("TherapistProfile: owner create/update succeeds; cross-user & ghost fields 
     })
   );
 
-  // Partial update
+  // Partial update with custom reminder template
   await assertSucceeds(
     anaDb.collection("users").doc(THERAPIST_A).update({
       crfa: "CRFa 2-19403",
+      customReminderTemplate: "Olá, {responsavel}! Lembrando da consulta de {paciente} em {data_hora}.",
       updatedAt: pastDate(1000),
+    })
+  );
+
+  // Oversized custom reminder template rejected (>1000 chars)
+  await assertFails(
+    anaDb.collection("users").doc(THERAPIST_A).update({
+      customReminderTemplate: "x".repeat(1001),
+      updatedAt: pastDate(800),
     })
   );
 
@@ -173,7 +182,7 @@ test("Patients: owner create, partial update, list succeed; cross-user & @Docume
     anaDb.collection("users").doc(THERAPIST_A).collection("patients").get()
   );
 
-  // Partial update preserving createdAt
+  // Partial update preserving createdAt (including clinical sheet fields)
   await assertSucceeds(
     anaDb
       .collection("users")
@@ -183,7 +192,23 @@ test("Patients: owner create, partial update, list succeed; cross-user & @Docume
       .update({
         status: "ALTA",
         weeklyGoalMinutes: 60,
+        medicalHistory: "Sem cirurgias laríngeas prévias. Videolaringoscopia em 10/2026.",
+        mainComplaints: "Cansaço vocal ao final do dia letivo.",
+        therapeuticGoals: "Aprimorar coordenação pneumofonoarticulatória e aumentar TMF para 14s.",
         updatedAt: pastDate(1000),
+      })
+  );
+
+  // Reject oversized clinical sheet text (>2000 chars)
+  await assertFails(
+    anaDb
+      .collection("users")
+      .doc(THERAPIST_A)
+      .collection("patients")
+      .doc("pat_1")
+      .update({
+        medicalHistory: "m".repeat(2001),
+        updatedAt: pastDate(900),
       })
   );
 
@@ -684,7 +709,11 @@ test("PatientAccessCodes: therapist generates/revokes code, patient redeems vali
         },
       ],
       nextAppointmentSummary: "25/11/2026 às 14:30 • Presencial",
+      nextAppointmentMillis: Date.now() + 86400000,
       recentProgressSummary: "Última clareza vocal: 84%",
+      dailyReminderEnabled: true,
+      reminderHour: 18,
+      reminderMinute: 0,
       createdAt: created,
       updatedAt: created,
     })

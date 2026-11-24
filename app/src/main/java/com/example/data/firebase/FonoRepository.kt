@@ -213,6 +213,7 @@ class FonoRepository(
                     "clinicName" to "Consultório de Fonoaudiologia",
                     "defaultReminderMinutes" to 60L,
                     "autoRemindersEnabled" to true,
+                    "customReminderTemplate" to "",
                     "createdAt" to FieldValue.serverTimestamp(),
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
@@ -232,7 +233,8 @@ class FonoRepository(
         crfa: String,
         clinicName: String,
         defaultReminderMinutes: Long,
-        autoRemindersEnabled: Boolean
+        autoRemindersEnabled: Boolean,
+        customReminderTemplate: String = ""
     ): Result<Unit> {
         var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}"
         return try {
@@ -240,6 +242,7 @@ class FonoRepository(
             val cleanName = displayName.trim().take(100)
             require(cleanName.isNotEmpty()) { "Informe seu nome profissional." }
             val safeLead = defaultReminderMinutes.coerceIn(5L, 10080L)
+            val safeTemplate = customReminderTemplate.trim().take(1000)
             val docRef = db.collection("users").document(uid)
             docPath = docRef.path
             docRef.update(
@@ -249,6 +252,7 @@ class FonoRepository(
                     "clinicName" to clinicName.trim().take(100),
                     "defaultReminderMinutes" to safeLead,
                     "autoRemindersEnabled" to autoRemindersEnabled,
+                    "customReminderTemplate" to safeTemplate,
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
             ).await()
@@ -297,6 +301,9 @@ class FonoRepository(
                 "status" to PatientStatus.ATIVO.name,
                 "weeklyGoalMinutes" to weeklyGoalMinutes.coerceIn(10, 1000).toLong(),
                 "initialNotes" to initialNotes.trim().take(1000),
+                "medicalHistory" to "",
+                "mainComplaints" to "",
+                "therapeuticGoals" to "",
                 "dailyExerciseReminderEnabled" to dailyExerciseReminderEnabled,
                 "reminderHour" to reminderHour.coerceIn(0, 23).toLong(),
                 "reminderMinute" to reminderMinute.coerceIn(0, 59).toLong(),
@@ -356,6 +363,36 @@ class FonoRepository(
                     "dailyExerciseReminderEnabled" to dailyExerciseReminderEnabled,
                     "reminderHour" to reminderHour.coerceIn(0, 23).toLong(),
                     "reminderMinute" to reminderMinute.coerceIn(0, 59).toLong(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updatePatientClinicalSheet(
+        patientId: String,
+        medicalHistory: String,
+        mainComplaints: String,
+        therapeuticGoals: String
+    ): Result<Unit> {
+        var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/patients/$patientId"
+        return try {
+            val uid = requireUserId()
+            require(patientId.isNotBlank()) { "ID do paciente inválido." }
+            val docRef = db.collection("users").document(uid)
+                .collection("patients").document(patientId)
+            docPath = docRef.path
+            docRef.update(
+                mapOf(
+                    "medicalHistory" to medicalHistory.trim().take(2000),
+                    "mainComplaints" to mainComplaints.trim().take(2000),
+                    "therapeuticGoals" to therapeuticGoals.trim().take(2000),
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
             ).await()
@@ -893,6 +930,14 @@ class FonoRepository(
         return result
     }
 
+    private fun findNextAppointmentMillis(appointments: List<Appointment>): Long {
+        val now = System.currentTimeMillis()
+        return appointments
+            .filter { !it.appointmentStatus.isTerminal && it.scheduledAtMillis >= now - 15 * 60_000L }
+            .minOfOrNull { it.scheduledAtMillis }
+            ?: 0L
+    }
+
     private fun buildNextAppointmentSummary(appointments: List<Appointment>): String {
         val now = System.currentTimeMillis()
         val next = appointments
@@ -960,7 +1005,11 @@ class FonoRepository(
                 "redeemedAtMillis" to 0L,
                 "exercisesSnapshot" to buildExerciseSnapshotMaps(exercises, patientLists),
                 "nextAppointmentSummary" to buildNextAppointmentSummary(appointments),
+                "nextAppointmentMillis" to findNextAppointmentMillis(appointments).coerceAtLeast(0L),
                 "recentProgressSummary" to buildRecentProgressSummary(sessions),
+                "dailyReminderEnabled" to patient.dailyExerciseReminderEnabled,
+                "reminderHour" to patient.reminderHour.coerceIn(0L, 23L),
+                "reminderMinute" to patient.reminderMinute.coerceIn(0L, 59L),
                 "createdAt" to FieldValue.serverTimestamp(),
                 "updatedAt" to FieldValue.serverTimestamp()
             )
@@ -1027,7 +1076,11 @@ class FonoRepository(
                 "weeklyGoalMinutes" to patient.weeklyGoalMinutes.coerceIn(10L, 1000L),
                 "exercisesSnapshot" to buildExerciseSnapshotMaps(exercises, patientLists),
                 "nextAppointmentSummary" to buildNextAppointmentSummary(appointments),
+                "nextAppointmentMillis" to findNextAppointmentMillis(appointments).coerceAtLeast(0L),
                 "recentProgressSummary" to buildRecentProgressSummary(sessions),
+                "dailyReminderEnabled" to patient.dailyExerciseReminderEnabled,
+                "reminderHour" to patient.reminderHour.coerceIn(0L, 23L),
+                "reminderMinute" to patient.reminderMinute.coerceIn(0L, 59L),
                 "updatedAt" to FieldValue.serverTimestamp()
             )
             val batch = db.batch()

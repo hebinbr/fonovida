@@ -54,6 +54,7 @@ import com.example.data.model.Appointment
 import com.example.data.model.AppointmentStatus
 import com.example.data.model.EvolutionSession
 import com.example.data.model.PatientStatus
+import com.example.ui.components.DashboardVoiceProgressChartCard
 import com.example.ui.theme.StatusSuccess
 import com.example.ui.theme.StatusSuccessBg
 import com.example.ui.viewmodel.ClinicData
@@ -202,6 +203,16 @@ fun DashboardScreen(
                         onClick = onOpenReportsTab
                     )
                 }
+            }
+
+            // Vocal Exercise Progress Line Chart
+            item {
+                DashboardVoiceProgressChartCard(
+                    patients = data.patients,
+                    sessions = data.sessions,
+                    onOpenPatient = onOpenPatient,
+                    onOpenReportsTab = onOpenReportsTab
+                )
             }
 
             // Patient Access Code Quick Card
@@ -371,11 +382,13 @@ fun DashboardScreen(
                                 OutlinedButton(
                                     onClick = { onSendAppointmentReminder(appt) },
                                     shape = RoundedCornerShape(10.dp),
-                                    modifier = Modifier.weight(1f)
+                                    modifier = Modifier
+                                        .weight(1f)
+                                        .testTag("dashboard_whatsapp_reminder_${appt.id}")
                                 ) {
                                     Icon(Icons.Rounded.Send, contentDescription = null, modifier = Modifier.size(15.dp))
                                     Spacer(Modifier.width(6.dp))
-                                    Text("Lembrar Resp.", maxLines = 1)
+                                    Text("WhatsApp", maxLines = 1)
                                 }
                                 if (appt.appointmentStatus == AppointmentStatus.AGENDADA) {
                                     FilledTonalButton(

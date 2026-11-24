@@ -51,7 +51,8 @@ service cloud.firestore {
              (!('crfa' in data) || (data.crfa is string && data.crfa.size() <= 40)) &&
              (!('clinicName' in data) || (data.clinicName is string && data.clinicName.size() <= 100)) &&
              data.defaultReminderMinutes is int && data.defaultReminderMinutes >= 5 && data.defaultReminderMinutes <= 10080 &&
-             data.autoRemindersEnabled is bool;
+             data.autoRemindersEnabled is bool &&
+             (!('customReminderTemplate' in data) || (data.customReminderTemplate is string && data.customReminderTemplate.size() <= 1000));
     }
 
     function isValidPatient(data) {
@@ -65,6 +66,9 @@ service cloud.firestore {
              isValidPatientStatus(data.status) &&
              data.weeklyGoalMinutes is int && data.weeklyGoalMinutes >= 10 && data.weeklyGoalMinutes <= 1000 &&
              (!('initialNotes' in data) || (data.initialNotes is string && data.initialNotes.size() <= 1000)) &&
+             (!('medicalHistory' in data) || (data.medicalHistory is string && data.medicalHistory.size() <= 2000)) &&
+             (!('mainComplaints' in data) || (data.mainComplaints is string && data.mainComplaints.size() <= 2000)) &&
+             (!('therapeuticGoals' in data) || (data.therapeuticGoals is string && data.therapeuticGoals.size() <= 2000)) &&
              data.dailyExerciseReminderEnabled is bool &&
              data.reminderHour is int && data.reminderHour >= 0 && data.reminderHour <= 23 &&
              data.reminderMinute is int && data.reminderMinute >= 0 && data.reminderMinute <= 59;
@@ -149,7 +153,11 @@ service cloud.firestore {
              data.redeemedAtMillis is int && data.redeemedAtMillis >= 0 &&
              data.exercisesSnapshot is list && data.exercisesSnapshot.size() <= 40 &&
              data.nextAppointmentSummary is string && data.nextAppointmentSummary.size() <= 200 &&
-             data.recentProgressSummary is string && data.recentProgressSummary.size() <= 300;
+             (!('nextAppointmentMillis' in data) || (data.nextAppointmentMillis is int && data.nextAppointmentMillis >= 0)) &&
+             data.recentProgressSummary is string && data.recentProgressSummary.size() <= 300 &&
+             (!('dailyReminderEnabled' in data) || data.dailyReminderEnabled is bool) &&
+             (!('reminderHour' in data) || (data.reminderHour is int && data.reminderHour >= 0 && data.reminderHour <= 23)) &&
+             (!('reminderMinute' in data) || (data.reminderMinute is int && data.reminderMinute >= 0 && data.reminderMinute <= 59));
     }
 
     // --- COLLECTIONS ---
@@ -162,7 +170,7 @@ service cloud.firestore {
                        isValidId(userId) &&
                        incoming().userId == userId &&
                        incoming().keys().hasAll(['userId', 'displayName', 'defaultReminderMinutes', 'autoRemindersEnabled', 'createdAt', 'updatedAt']) &&
-                       incoming().keys().hasOnly(['userId', 'displayName', 'email', 'crfa', 'clinicName', 'defaultReminderMinutes', 'autoRemindersEnabled', 'createdAt', 'updatedAt']) &&
+                       incoming().keys().hasOnly(['userId', 'displayName', 'email', 'crfa', 'clinicName', 'defaultReminderMinutes', 'autoRemindersEnabled', 'customReminderTemplate', 'createdAt', 'updatedAt']) &&
                        incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
                        incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
                        isValidTherapistProfile(incoming());
@@ -173,7 +181,7 @@ service cloud.firestore {
                        incoming().userId == existing().userId &&
                        incoming().createdAt == existing().createdAt &&
                        incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
-                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'crfa', 'clinicName', 'defaultReminderMinutes', 'autoRemindersEnabled', 'updatedAt']);
+                       incoming().diff(existing()).affectedKeys().hasOnly(['displayName', 'email', 'crfa', 'clinicName', 'defaultReminderMinutes', 'autoRemindersEnabled', 'customReminderTemplate', 'updatedAt']);
 
       allow delete: if isOwner(userId) && isValidId(userId);
 
@@ -193,8 +201,9 @@ service cloud.firestore {
                          incoming().keys().hasOnly([
                            'userId', 'fullName', 'ageYears', 'clinicalFocus', 'guardianName',
                            'guardianPhone', 'guardianEmail', 'status', 'weeklyGoalMinutes',
-                           'initialNotes', 'dailyExerciseReminderEnabled', 'reminderHour',
-                           'reminderMinute', 'createdAt', 'updatedAt'
+                           'initialNotes', 'medicalHistory', 'mainComplaints', 'therapeuticGoals',
+                           'dailyExerciseReminderEnabled', 'reminderHour', 'reminderMinute',
+                           'createdAt', 'updatedAt'
                          ]) &&
                          incoming().createdAt is timestamp && incoming().createdAt <= request.time &&
                          incoming().updatedAt is timestamp && incoming().updatedAt <= request.time &&
@@ -210,8 +219,9 @@ service cloud.firestore {
                            incoming().diff(existing()).affectedKeys().hasOnly([
                              'fullName', 'ageYears', 'clinicalFocus', 'guardianName',
                              'guardianPhone', 'guardianEmail', 'status', 'weeklyGoalMinutes',
-                             'initialNotes', 'dailyExerciseReminderEnabled', 'reminderHour',
-                             'reminderMinute', 'updatedAt'
+                             'initialNotes', 'medicalHistory', 'mainComplaints', 'therapeuticGoals',
+                             'dailyExerciseReminderEnabled', 'reminderHour', 'reminderMinute',
+                             'updatedAt'
                            ])
                          );
 
@@ -449,7 +459,9 @@ service cloud.firestore {
                          'code', 'therapistId', 'therapistName', 'clinicName',
                          'patientId', 'patientName', 'clinicalFocus', 'weeklyGoalMinutes',
                          'active', 'redeemedByUid', 'redeemedAtMillis', 'exercisesSnapshot',
-                         'nextAppointmentSummary', 'recentProgressSummary', 'createdAt', 'updatedAt'
+                         'nextAppointmentSummary', 'nextAppointmentMillis', 'recentProgressSummary',
+                         'dailyReminderEnabled', 'reminderHour', 'reminderMinute',
+                         'createdAt', 'updatedAt'
                        ]) &&
                        incoming().active == true &&
                        incoming().redeemedByUid == '' &&
@@ -471,7 +483,9 @@ service cloud.firestore {
                          incoming().diff(existing()).affectedKeys().hasOnly([
                            'therapistName', 'clinicName', 'patientName', 'clinicalFocus',
                            'weeklyGoalMinutes', 'active', 'redeemedByUid', 'redeemedAtMillis',
-                           'exercisesSnapshot', 'nextAppointmentSummary', 'recentProgressSummary', 'updatedAt'
+                           'exercisesSnapshot', 'nextAppointmentSummary', 'nextAppointmentMillis',
+                           'recentProgressSummary', 'dailyReminderEnabled', 'reminderHour',
+                           'reminderMinute', 'updatedAt'
                          ])
                        ) ||
                        (

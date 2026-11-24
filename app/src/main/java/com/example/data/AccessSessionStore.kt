@@ -59,6 +59,41 @@ class AccessSessionStore(context: Context) {
         return current
     }
 
+    fun hasPatientReminderOverride(code: String): Boolean {
+        val norm = code.trim().uppercase()
+        if (norm.isBlank()) return false
+        return prefs.contains("pat_rem_override_$norm")
+    }
+
+    fun getPatientReminderEnabled(code: String, defaultValue: Boolean): Boolean {
+        val norm = code.trim().uppercase()
+        if (norm.isBlank() || !prefs.contains("pat_rem_override_$norm")) return defaultValue
+        return prefs.getBoolean("pat_rem_enabled_$norm", defaultValue)
+    }
+
+    fun getPatientReminderHour(code: String, defaultValue: Int): Int {
+        val norm = code.trim().uppercase()
+        if (norm.isBlank() || !prefs.contains("pat_rem_override_$norm")) return defaultValue.coerceIn(0, 23)
+        return prefs.getInt("pat_rem_hour_$norm", defaultValue).coerceIn(0, 23)
+    }
+
+    fun getPatientReminderMinute(code: String, defaultValue: Int): Int {
+        val norm = code.trim().uppercase()
+        if (norm.isBlank() || !prefs.contains("pat_rem_override_$norm")) return defaultValue.coerceIn(0, 59)
+        return prefs.getInt("pat_rem_minute_$norm", defaultValue).coerceIn(0, 59)
+    }
+
+    fun savePatientReminderPrefs(code: String, enabled: Boolean, hour: Int, minute: Int) {
+        val norm = code.trim().uppercase()
+        if (norm.isBlank()) return
+        prefs.edit()
+            .putBoolean("pat_rem_override_$norm", true)
+            .putBoolean("pat_rem_enabled_$norm", enabled)
+            .putInt("pat_rem_hour_$norm", hour.coerceIn(0, 23))
+            .putInt("pat_rem_minute_$norm", minute.coerceIn(0, 59))
+            .apply()
+    }
+
     fun clearUserSession(uid: String) {
         if (uid.isBlank()) return
         prefs.edit()

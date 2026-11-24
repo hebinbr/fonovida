@@ -1,5 +1,6 @@
 package com.example
 
+import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
@@ -49,27 +50,70 @@ import com.example.ui.viewmodel.PatientPortalViewModel
 import com.google.firebase.Firebase
 import com.google.firebase.auth.auth
 import com.google.firebase.firestore.FirebaseFirestore
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+
+data class PendingWhatsAppDispatch(
+    val uri: String,
+    val appointmentId: String
+)
 
 class MainActivity : ComponentActivity() {
+    private val pendingWhatsAppFlow = MutableStateFlow<PendingWhatsAppDispatch?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         ReminderScheduler.ensureNotificationChannel(this)
+        handleReminderWhatsAppIntent(intent)
 
         setContent {
             FonoVidaTheme {
-                AppContent()
+                AppContent(
+                    pendingWhatsAppState = pendingWhatsAppFlow.asStateFlow(),
+                    onConsumePendingWhatsApp = { pendingWhatsAppFlow.value = null }
+                )
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleReminderWhatsAppIntent(intent)
+    }
+
+    private fun handleReminderWhatsAppIntent(intent: Intent?) {
+        val waUri = intent?.getStringExtra(ReminderScheduler.EXTRA_WHATSAPP_URI) ?: return
+        val apptId = intent.getStringExtra(ReminderScheduler.EXTRA_WHATSAPP_APPT_ID).orEmpty()
+        intent.removeExtra(ReminderScheduler.EXTRA_WHATSAPP_URI)
+        intent.removeExtra(ReminderScheduler.EXTRA_WHATSAPP_APPT_ID)
+        pendingWhatsAppFlow.value = PendingWhatsAppDispatch(waUri, apptId)
     }
 }
 
 @Composable
-fun AppContent() {
+fun AppContent(
+    pendingWhatsAppState: StateFlow<PendingWhatsAppDispatch?> = MutableStateFlow(null),
+    onConsumePendingWhatsApp: () -> Unit = {}
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val credentialManager = remember { CredentialManager.create(context) }
     val accessStore = remember(context) { AccessSessionStore(context) }
+
+    val pendingWhatsApp by pendingWhatsAppState.collectAsStateWithLifecycle()
+    var pendingNotificationApptId by remember { mutableStateOf("") }
+
+    LaunchedEffect(pendingWhatsApp) {
+        val pending = pendingWhatsApp ?: return@LaunchedEffect
+        ReminderScheduler.launchWhatsAppUrl(context, pending.uri)
+        if (pending.appointmentId.isNotBlank()) {
+            pendingNotificationApptId = pending.appointmentId
+        }
+        onConsumePendingWhatsApp()
+    }
 
     val auth = Firebase.auth
     val currentUser by auth.authStateFlow().collectAsStateWithLifecycle(initialValue = auth.currentUser)
@@ -158,6 +202,8 @@ fun AppContent() {
                         viewModel = viewModel,
                         fallbackName = user.displayName ?: "Dra. Fonoaudióloga",
                         fallbackEmail = user.email ?: "",
+                        pendingNotificationApptId = pendingNotificationApptId,
+                        onConsumeNotificationApptId = { pendingNotificationApptId = "" },
                         onSwitchToPatientMode = {
                             cameFromRoleChoice = true
                             accessStore.setRole(user.uid, AppUserRole.PATIENT)
@@ -193,6 +239,14 @@ fun AppContent() {
                     val isRedeeming by portalViewModel.isRedeeming.collectAsStateWithLifecycle()
                     val redeemError by portalViewModel.redeemError.collectAsStateWithLifecycle()
                     val completedToday by portalViewModel.completedToday.collectAsStateWithLifecycle()
+                    val reminderSettings by portalViewModel.reminderSettings.collectAsStateWithLifecycle()
+
+                    LaunchedEffect(portalState, reminderSettings) {
+                        val unlocked = portalState as? PatientPortalState.Unlocked
+                        if (unlocked != null) {
+                            portalViewModel.syncReminders(context, unlocked.accessCode)
+                        }
+                    }
 
                     if (cameFromRoleChoice) {
                         BackHandler {
@@ -216,6 +270,7 @@ fun AppContent() {
                                     currentRole = AppUserRole.NONE
                                 },
                                 onSignOut = {
+                                    portalViewModel.clearCodeAndLock(context)
                                     accessStore.clearUserSession(user.uid)
                                     currentRole = AppUserRole.NONE
                                     signOut(credentialManager, scope)
@@ -243,18 +298,35 @@ fun AppContent() {
                             PatientPortalScreen(
                                 accessCode = pState.accessCode,
                                 completedToday = completedToday,
+                                reminderSettings = reminderSettings,
                                 onToggleExerciseDone = { exKey ->
                                     portalViewModel.toggleExerciseDone(
                                         code = pState.accessCode.code,
                                         exerciseKey = exKey
                                     )
                                 },
-                                onChangeCode = { portalViewModel.clearCodeAndLock() },
+                                onUpdateReminderSettings = { enabled, hour, minute ->
+                                    portalViewModel.updateReminderSettings(
+                                        context = context,
+                                        accessCode = pState.accessCode,
+                                        enabled = enabled,
+                                        hour = hour,
+                                        minute = minute
+                                    )
+                                },
+                                onSendTestReminder = {
+                                    portalViewModel.sendWorkManagerTestNotification(
+                                        context = context,
+                                        patientName = pState.accessCode.patientName
+                                    )
+                                },
+                                onChangeCode = { portalViewModel.clearCodeAndLock(context) },
                                 onSwitchRole = {
                                     accessStore.setRole(user.uid, AppUserRole.NONE)
                                     currentRole = AppUserRole.NONE
                                 },
                                 onSignOut = {
+                                    portalViewModel.clearCodeAndLock(context)
                                     accessStore.clearUserSession(user.uid)
                                     currentRole = AppUserRole.NONE
                                     signOut(credentialManager, scope)

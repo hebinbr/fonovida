@@ -67,6 +67,7 @@ data class TherapistProfile(
     val clinicName: String = "",
     val defaultReminderMinutes: Long = 60L,
     val autoRemindersEnabled: Boolean = true,
+    val customReminderTemplate: String = "",
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 )
@@ -85,6 +86,9 @@ data class Patient(
     val status: String = PatientStatus.ATIVO.name,
     val weeklyGoalMinutes: Long = 60L,
     val initialNotes: String = "",
+    val medicalHistory: String = "",
+    val mainComplaints: String = "",
+    val therapeuticGoals: String = "",
     val dailyExerciseReminderEnabled: Boolean = true,
     val reminderHour: Long = 18L,
     val reminderMinute: Long = 0L,
@@ -93,6 +97,9 @@ data class Patient(
 ) {
     val patientStatus: PatientStatus
         get() = PatientStatus.fromRaw(status)
+
+    val hasClinicalSheetContent: Boolean
+        get() = medicalHistory.isNotBlank() || mainComplaints.isNotBlank() || therapeuticGoals.isNotBlank()
 }
 
 @Keep
@@ -429,7 +436,11 @@ data class PatientAccessCode(
     val redeemedAtMillis: Long = 0L,
     val exercisesSnapshot: List<PatientExerciseSnapshotItem> = emptyList(),
     val nextAppointmentSummary: String = "",
+    val nextAppointmentMillis: Long = 0L,
     val recentProgressSummary: String = "",
+    val dailyReminderEnabled: Boolean = true,
+    val reminderHour: Long = 18L,
+    val reminderMinute: Long = 0L,
     @ServerTimestamp val createdAt: Timestamp? = null,
     @ServerTimestamp val updatedAt: Timestamp? = null
 )

@@ -236,6 +236,31 @@ class FonoViewModel(
         }
     }
 
+    fun saveClinicalSheet(
+        patientId: String,
+        medicalHistory: String,
+        mainComplaints: String,
+        therapeuticGoals: String,
+        onSuccess: () -> Unit = {}
+    ) {
+        viewModelScope.launch {
+            _isBusy.value = true
+            val result = repository.updatePatientClinicalSheet(
+                patientId = patientId,
+                medicalHistory = medicalHistory,
+                mainComplaints = mainComplaints,
+                therapeuticGoals = therapeuticGoals
+            )
+            _isBusy.value = false
+            result.onSuccess {
+                _events.tryEmit("Ficha clínica salva com sucesso no Firebase Firestore.")
+                onSuccess()
+            }.onFailure { err ->
+                _events.tryEmit(err.localizedMessage ?: "Não foi possível salvar a ficha clínica.")
+            }
+        }
+    }
+
     fun deletePatient(patientId: String, onDeleted: () -> Unit) {
         viewModelScope.launch {
             _isBusy.value = true
@@ -480,6 +505,10 @@ class FonoViewModel(
             )
             _isBusy.value = false
             result.onSuccess { apptId ->
+                val profile = (clinicState.value as? UiState.Success<ClinicData>)?.data?.profile
+                val therapistName = profile?.displayName?.ifBlank { userDisplayName } ?: userDisplayName
+                val clinicName = profile?.clinicName.orEmpty()
+                val customTemplate = profile?.customReminderTemplate.orEmpty()
                 ReminderScheduler.scheduleAppointmentReminder(
                     context = context,
                     appointment = Appointment(
@@ -497,7 +526,10 @@ class FonoViewModel(
                         reminderLeadMinutes = reminderLeadMinutes,
                         patientReminderEnabled = patientReminderEnabled,
                         patientReminderLeadMinutes = patientReminderLeadMinutes
-                    )
+                    ),
+                    therapistName = therapistName,
+                    customReminderTemplate = customTemplate,
+                    clinicName = clinicName
                 )
                 schedulePortalMirrorSync(patient.id)
                 _events.tryEmit(
@@ -561,14 +593,45 @@ class FonoViewModel(
     fun dispatchGuardianAppointmentReminder(
         context: Context,
         appointment: Appointment,
-        therapistName: String
+        therapistName: String,
+        customTemplate: String? = null,
+        clinicName: String? = null
     ) {
-        val message = ReminderScheduler.buildAppointmentGuardianMessage(appointment, therapistName)
+        val profile = (clinicState.value as? UiState.Success<ClinicData>)?.data?.profile
+        val effectiveTemplate = customTemplate ?: profile?.customReminderTemplate.orEmpty()
+        val effectiveClinic = clinicName ?: profile?.clinicName.orEmpty()
+        val message = ReminderScheduler.buildAppointmentGuardianMessage(
+            appointment = appointment,
+            therapistName = therapistName,
+            customTemplate = effectiveTemplate,
+            clinicName = effectiveClinic
+        )
         ReminderScheduler.launchGuardianReminderShare(context, appointment.guardianPhone, message)
+        _events.tryEmit("Abrindo WhatsApp (wa.me) para enviar lembrete de confirmação.")
         if (!appointment.appointmentStatus.isTerminal) {
             viewModelScope.launch {
                 repository.markAppointmentReminderSent(appointment.id)
             }
+        }
+    }
+
+    fun dispatchGuardianConfirmationNotice(
+        context: Context,
+        appointment: Appointment,
+        therapistName: String
+    ) {
+        val message = ReminderScheduler.buildAppointmentConfirmedMessage(appointment, therapistName)
+        ReminderScheduler.launchGuardianReminderShare(context, appointment.guardianPhone, message)
+        _events.tryEmit("Abrindo WhatsApp (wa.me) para confirmar consulta com o responsável.")
+        viewModelScope.launch {
+            repository.markAppointmentReminderSent(appointment.id)
+        }
+    }
+
+    fun markAppointmentReminderSent(appointmentId: String) {
+        if (appointmentId.isBlank()) return
+        viewModelScope.launch {
+            repository.markAppointmentReminderSent(appointmentId)
         }
     }
 
@@ -586,9 +649,18 @@ class FonoViewModel(
 
     fun deleteAppointment(context: Context, appointmentId: String) {
         viewModelScope.launch {
+            val patientId = (clinicState.value as? UiState.Success<ClinicData>)
+                ?.data
+                ?.appointments
+                ?.firstOrNull { it.id == appointmentId }
+                ?.patientId
+                .orEmpty()
             repository.deleteAppointment(appointmentId)
                 .onSuccess {
                     ReminderScheduler.cancelAppointmentReminder(context, appointmentId)
+                    if (patientId.isNotBlank()) {
+                        schedulePortalMirrorSync(patientId)
+                    }
                     _events.tryEmit("Agendamento removido.")
                 }
                 .onFailure { err ->
@@ -603,6 +675,7 @@ class FonoViewModel(
         clinicName: String,
         defaultReminderMinutes: Long,
         autoRemindersEnabled: Boolean,
+        customReminderTemplate: String,
         onSuccess: () -> Unit
     ) {
         viewModelScope.launch {
@@ -612,7 +685,8 @@ class FonoViewModel(
                 crfa = crfa,
                 clinicName = clinicName,
                 defaultReminderMinutes = defaultReminderMinutes,
-                autoRemindersEnabled = autoRemindersEnabled
+                autoRemindersEnabled = autoRemindersEnabled,
+                customReminderTemplate = customReminderTemplate
             )
             _isBusy.value = false
             result.onSuccess {
