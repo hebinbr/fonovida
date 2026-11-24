@@ -46,9 +46,16 @@ class FonoRepository(
         )
     )
 
+    private fun requireValidDocId(id: String, message: String = "Identificador inválido."): String {
+        val trimmed = id.trim()
+        require(VALID_DOC_ID_REGEX.matches(trimmed)) { message }
+        return trimmed
+    }
+
     private fun requireUserId(): String {
-        return auth.currentUser?.uid
+        val uid = auth.currentUser?.uid
             ?: throw IllegalStateException("A fonoaudióloga precisa estar autenticada com Google.")
+        return requireValidDocId(uid, "Identificador de usuário inválido.")
     }
 
     private fun <T> Flow<T>.withFirestoreErrorLogging(
@@ -68,9 +75,10 @@ class FonoRepository(
     }
 
     fun observeProfile(userId: String): Flow<TherapistProfile?> = flow {
-        val path = "users/$userId"
+        val safeUid = requireValidDocId(userId, "ID de usuário inválido.")
+        val path = "users/$safeUid"
         emitAll(
-            db.collection("users").document(userId)
+            db.collection("users").document(safeUid)
                 .snapshots()
                 .map { snapshot ->
                     if (snapshot.exists()) {
@@ -87,9 +95,10 @@ class FonoRepository(
     }
 
     fun observePatients(userId: String): Flow<List<Patient>> = flow {
-        val path = "users/$userId/patients"
+        val safeUid = requireValidDocId(userId, "ID de usuário inválido.")
+        val path = "users/$safeUid/patients"
         emitAll(
-            db.collection("users").document(userId).collection("patients")
+            db.collection("users").document(safeUid).collection("patients")
                 .snapshots()
                 .map { snapshot ->
                     snapshot.toObjects(
@@ -97,14 +106,15 @@ class FonoRepository(
                         DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
                     ).sortedBy { it.fullName.lowercase() }
                 }
-                .withFirestoreErrorLogging(userId, OperationType.LIST, path)
+                .withFirestoreErrorLogging(safeUid, OperationType.LIST, path)
         )
     }
 
     fun observeExercises(userId: String): Flow<List<VoiceExercise>> = flow {
-        val path = "users/$userId/exercises"
+        val safeUid = requireValidDocId(userId, "ID de usuário inválido.")
+        val path = "users/$safeUid/exercises"
         emitAll(
-            db.collection("users").document(userId).collection("exercises")
+            db.collection("users").document(safeUid).collection("exercises")
                 .snapshots()
                 .map { snapshot ->
                     snapshot.toObjects(
@@ -112,14 +122,15 @@ class FonoRepository(
                         DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
                     ).sortedByDescending { it.createdAt?.seconds ?: 0L }
                 }
-                .withFirestoreErrorLogging(userId, OperationType.LIST, path)
+                .withFirestoreErrorLogging(safeUid, OperationType.LIST, path)
         )
     }
 
     fun observeSessions(userId: String): Flow<List<EvolutionSession>> = flow {
-        val path = "users/$userId/sessions"
+        val safeUid = requireValidDocId(userId, "ID de usuário inválido.")
+        val path = "users/$safeUid/sessions"
         emitAll(
-            db.collection("users").document(userId).collection("sessions")
+            db.collection("users").document(safeUid).collection("sessions")
                 .snapshots()
                 .map { snapshot ->
                     snapshot.toObjects(
@@ -127,14 +138,15 @@ class FonoRepository(
                         DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
                     ).sortedByDescending { it.sessionDateMillis }
                 }
-                .withFirestoreErrorLogging(userId, OperationType.LIST, path)
+                .withFirestoreErrorLogging(safeUid, OperationType.LIST, path)
         )
     }
 
     fun observeAppointments(userId: String): Flow<List<Appointment>> = flow {
-        val path = "users/$userId/appointments"
+        val safeUid = requireValidDocId(userId, "ID de usuário inválido.")
+        val path = "users/$safeUid/appointments"
         emitAll(
-            db.collection("users").document(userId).collection("appointments")
+            db.collection("users").document(safeUid).collection("appointments")
                 .snapshots()
                 .map { snapshot ->
                     snapshot.toObjects(
@@ -142,14 +154,15 @@ class FonoRepository(
                         DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
                     ).sortedBy { it.scheduledAtMillis }
                 }
-                .withFirestoreErrorLogging(userId, OperationType.LIST, path)
+                .withFirestoreErrorLogging(safeUid, OperationType.LIST, path)
         )
     }
 
     fun observeSlotBlocks(userId: String): Flow<List<SlotBlock>> = flow {
-        val path = "users/$userId/slotBlocks"
+        val safeUid = requireValidDocId(userId, "ID de usuário inválido.")
+        val path = "users/$safeUid/slotBlocks"
         emitAll(
-            db.collection("users").document(userId).collection("slotBlocks")
+            db.collection("users").document(safeUid).collection("slotBlocks")
                 .snapshots()
                 .map { snapshot ->
                     snapshot.toObjects(
@@ -157,14 +170,15 @@ class FonoRepository(
                         DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
                     ).sortedWith(compareBy({ it.dateKey }, { it.hour }, { it.minute }))
                 }
-                .withFirestoreErrorLogging(userId, OperationType.LIST, path)
+                .withFirestoreErrorLogging(safeUid, OperationType.LIST, path)
         )
     }
 
     fun observeExerciseLists(userId: String): Flow<List<CustomExerciseList>> = flow {
-        val path = "users/$userId/exerciseLists"
+        val safeUid = requireValidDocId(userId, "ID de usuário inválido.")
+        val path = "users/$safeUid/exerciseLists"
         emitAll(
-            db.collection("users").document(userId).collection("exerciseLists")
+            db.collection("users").document(safeUid).collection("exerciseLists")
                 .snapshots()
                 .map { snapshot ->
                     snapshot.toObjects(
@@ -172,15 +186,16 @@ class FonoRepository(
                         DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
                     ).sortedByDescending { it.updatedAt?.seconds ?: 0L }
                 }
-                .withFirestoreErrorLogging(userId, OperationType.LIST, path)
+                .withFirestoreErrorLogging(safeUid, OperationType.LIST, path)
         )
     }
 
     fun observePatientAccessCodes(userId: String): Flow<List<PatientAccessCode>> = flow {
+        val safeUid = requireValidDocId(userId, "ID de usuário inválido.")
         val path = "patientAccessCodes"
         emitAll(
             db.collection("patientAccessCodes")
-                .whereEqualTo("therapistId", userId)
+                .whereEqualTo("therapistId", safeUid)
                 .snapshots()
                 .map { snapshot ->
                     snapshot.toObjects(
@@ -188,7 +203,7 @@ class FonoRepository(
                         DocumentSnapshot.ServerTimestampBehavior.ESTIMATE
                     ).sortedByDescending { it.createdAt?.seconds ?: 0L }
                 }
-                .withFirestoreErrorLogging(userId, OperationType.LIST, path)
+                .withFirestoreErrorLogging(safeUid, OperationType.LIST, path)
         )
     }
 
@@ -273,6 +288,7 @@ class FonoRepository(
         guardianPhone: String,
         guardianEmail: String,
         weeklyGoalMinutes: Int,
+        weeklyExerciseFrequencyGoal: Int = 5,
         initialNotes: String,
         dailyExerciseReminderEnabled: Boolean,
         reminderHour: Int,
@@ -300,6 +316,7 @@ class FonoRepository(
                 "guardianEmail" to guardianEmail.trim().take(120),
                 "status" to PatientStatus.ATIVO.name,
                 "weeklyGoalMinutes" to weeklyGoalMinutes.coerceIn(10, 1000).toLong(),
+                "weeklyExerciseFrequencyGoal" to weeklyExerciseFrequencyGoal.coerceIn(1, 21).toLong(),
                 "initialNotes" to initialNotes.trim().take(1000),
                 "medicalHistory" to "",
                 "mainComplaints" to "",
@@ -330,6 +347,7 @@ class FonoRepository(
         guardianEmail: String,
         status: PatientStatus,
         weeklyGoalMinutes: Int,
+        weeklyExerciseFrequencyGoal: Int = 5,
         initialNotes: String,
         dailyExerciseReminderEnabled: Boolean,
         reminderHour: Int,
@@ -338,7 +356,7 @@ class FonoRepository(
         var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/patients/$patientId"
         return try {
             val uid = requireUserId()
-            require(patientId.isNotBlank()) { "ID do paciente inválido." }
+            val safePatientId = requireValidDocId(patientId, "ID do paciente inválido.")
             val cleanName = fullName.trim().take(100)
             val cleanFocus = clinicalFocus.trim().take(120)
             val cleanGuardian = guardianName.trim().take(100)
@@ -347,7 +365,7 @@ class FonoRepository(
             require(cleanGuardian.length >= 2) { "Informe o nome do responsável." }
 
             val docRef = db.collection("users").document(uid)
-                .collection("patients").document(patientId)
+                .collection("patients").document(safePatientId)
             docPath = docRef.path
             docRef.update(
                 mapOf(
@@ -359,10 +377,37 @@ class FonoRepository(
                     "guardianEmail" to guardianEmail.trim().take(120),
                     "status" to status.name,
                     "weeklyGoalMinutes" to weeklyGoalMinutes.coerceIn(10, 1000).toLong(),
+                    "weeklyExerciseFrequencyGoal" to weeklyExerciseFrequencyGoal.coerceIn(1, 21).toLong(),
                     "initialNotes" to initialNotes.trim().take(1000),
                     "dailyExerciseReminderEnabled" to dailyExerciseReminderEnabled,
                     "reminderHour" to reminderHour.coerceIn(0, 23).toLong(),
                     "reminderMinute" to reminderMinute.coerceIn(0, 59).toLong(),
+                    "updatedAt" to FieldValue.serverTimestamp()
+                )
+            ).await()
+            Result.success(Unit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            handleFirestoreError(e, OperationType.UPDATE, docPath)
+            Result.failure(e)
+        }
+    }
+
+    suspend fun updatePatientWeeklyFrequencyGoal(
+        patientId: String,
+        frequencyGoal: Int
+    ): Result<Unit> {
+        var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/patients/$patientId"
+        return try {
+            val uid = requireUserId()
+            val safePatientId = requireValidDocId(patientId, "ID do paciente inválido.")
+            val docRef = db.collection("users").document(uid)
+                .collection("patients").document(safePatientId)
+            docPath = docRef.path
+            docRef.update(
+                mapOf(
+                    "weeklyExerciseFrequencyGoal" to frequencyGoal.coerceIn(1, 21).toLong(),
                     "updatedAt" to FieldValue.serverTimestamp()
                 )
             ).await()
@@ -384,9 +429,9 @@ class FonoRepository(
         var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/patients/$patientId"
         return try {
             val uid = requireUserId()
-            require(patientId.isNotBlank()) { "ID do paciente inválido." }
+            val safePatientId = requireValidDocId(patientId, "ID do paciente inválido.")
             val docRef = db.collection("users").document(uid)
-                .collection("patients").document(patientId)
+                .collection("patients").document(safePatientId)
             docPath = docRef.path
             docRef.update(
                 mapOf(
@@ -409,17 +454,17 @@ class FonoRepository(
         var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/patients/$patientId"
         return try {
             val uid = requireUserId()
-            require(patientId.isNotBlank()) { "ID do paciente inválido." }
+            val safePatientId = requireValidDocId(patientId, "ID do paciente inválido.")
             val userRef = db.collection("users").document(uid)
-            docPath = userRef.collection("patients").document(patientId).path
+            docPath = userRef.collection("patients").document(safePatientId).path
 
-            val exercises = userRef.collection("exercises").whereEqualTo("patientId", patientId).get().await()
-            val sessions = userRef.collection("sessions").whereEqualTo("patientId", patientId).get().await()
-            val appointments = userRef.collection("appointments").whereEqualTo("patientId", patientId).get().await()
-            val lists = userRef.collection("exerciseLists").whereEqualTo("patientId", patientId).get().await()
+            val exercises = userRef.collection("exercises").whereEqualTo("patientId", safePatientId).get().await()
+            val sessions = userRef.collection("sessions").whereEqualTo("patientId", safePatientId).get().await()
+            val appointments = userRef.collection("appointments").whereEqualTo("patientId", safePatientId).get().await()
+            val lists = userRef.collection("exerciseLists").whereEqualTo("patientId", safePatientId).get().await()
             val accessCodes = db.collection("patientAccessCodes")
                 .whereEqualTo("therapistId", uid)
-                .whereEqualTo("patientId", patientId)
+                .whereEqualTo("patientId", safePatientId)
                 .get()
                 .await()
 
@@ -429,7 +474,7 @@ class FonoRepository(
             appointments.documents.forEach { batch.delete(it.reference) }
             lists.documents.forEach { batch.delete(it.reference) }
             accessCodes.documents.forEach { batch.delete(it.reference) }
-            batch.delete(userRef.collection("patients").document(patientId))
+            batch.delete(userRef.collection("patients").document(safePatientId))
             batch.commit().await()
             Result.success(Unit)
         } catch (e: CancellationException) {
@@ -451,7 +496,7 @@ class FonoRepository(
         var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/exercises"
         return try {
             val uid = requireUserId()
-            require(patientId.isNotBlank()) { "Paciente não selecionado." }
+            val safePatientId = requireValidDocId(patientId, "Paciente não selecionado.")
             val cleanTitle = title.trim().take(100)
             val cleanInstructions = instructions.trim().take(1000)
             require(cleanTitle.length >= 2) { "O nome do exercício deve ter ao menos 2 caracteres." }
@@ -461,7 +506,7 @@ class FonoRepository(
             docPath = docRef.path
             val payload = mapOf(
                 "userId" to uid,
-                "patientId" to patientId,
+                "patientId" to safePatientId,
                 "title" to cleanTitle,
                 "category" to category.name,
                 "instructions" to cleanInstructions,
@@ -485,9 +530,9 @@ class FonoRepository(
         var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/exercises/$exerciseId"
         return try {
             val uid = requireUserId()
-            require(exerciseId.isNotBlank())
+            val safeExerciseId = requireValidDocId(exerciseId, "ID do exercício inválido.")
             val docRef = db.collection("users").document(uid)
-                .collection("exercises").document(exerciseId)
+                .collection("exercises").document(safeExerciseId)
             docPath = docRef.path
             docRef.update(
                 mapOf(
@@ -508,9 +553,9 @@ class FonoRepository(
         var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/exercises/$exerciseId"
         return try {
             val uid = requireUserId()
-            require(exerciseId.isNotBlank())
+            val safeExerciseId = requireValidDocId(exerciseId, "ID do exercício inválido.")
             val docRef = db.collection("users").document(uid)
-                .collection("exercises").document(exerciseId)
+                .collection("exercises").document(safeExerciseId)
             docPath = docRef.path
             docRef.delete().await()
             Result.success(Unit)
@@ -539,7 +584,7 @@ class FonoRepository(
         var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/sessions"
         return try {
             val uid = requireUserId()
-            require(patientId.isNotBlank()) { "Paciente inválido." }
+            val safePatientId = requireValidDocId(patientId, "Paciente inválido.")
             val cleanTitle = exerciseTitle.trim().take(120)
             require(cleanTitle.length >= 2) { "Informe o exercício realizado." }
             val safeDateMillis = if (sessionDateMillis > 0L) sessionDateMillis else System.currentTimeMillis()
@@ -548,7 +593,7 @@ class FonoRepository(
             docPath = docRef.path
             val payload = mapOf(
                 "userId" to uid,
-                "patientId" to patientId,
+                "patientId" to safePatientId,
                 "patientName" to patientName.trim().take(100).ifBlank { "Paciente" },
                 "exerciseTitle" to cleanTitle,
                 "category" to category.name,
@@ -577,9 +622,9 @@ class FonoRepository(
         var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/sessions/$sessionId"
         return try {
             val uid = requireUserId()
-            require(sessionId.isNotBlank())
+            val safeSessionId = requireValidDocId(sessionId, "ID da sessão inválido.")
             val docRef = db.collection("users").document(uid)
-                .collection("sessions").document(sessionId)
+                .collection("sessions").document(safeSessionId)
             docPath = docRef.path
             docRef.delete().await()
             Result.success(Unit)
@@ -605,14 +650,14 @@ class FonoRepository(
         var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/appointments"
         return try {
             val uid = requireUserId()
-            require(patient.id.isNotBlank()) { "Selecione um paciente." }
+            val safePatientId = requireValidDocId(patient.id, "Selecione um paciente.")
             require(scheduledAtMillis > 0L) { "Horário inválido." }
 
             val docRef = db.collection("users").document(uid).collection("appointments").document()
             docPath = docRef.path
             val payload = mapOf(
                 "userId" to uid,
-                "patientId" to patient.id,
+                "patientId" to safePatientId,
                 "patientName" to patient.fullName.trim().take(100),
                 "guardianName" to patient.guardianName.trim().take(100),
                 "guardianPhone" to patient.guardianPhone.trim().take(30),
@@ -651,8 +696,9 @@ class FonoRepository(
         return try {
             val uid = requireUserId()
             require(Regex("^\\d{4}-\\d{2}-\\d{2}$").matches(dateKey)) { "Data inválida." }
+            val safeDocId = requireValidDocId(docId, "Identificador de bloqueio inválido.")
             val docRef = db.collection("users").document(uid)
-                .collection("slotBlocks").document(docId)
+                .collection("slotBlocks").document(safeDocId)
             docPath = docRef.path
             val payload = mapOf(
                 "userId" to uid,
@@ -665,7 +711,7 @@ class FonoRepository(
                 "updatedAt" to FieldValue.serverTimestamp()
             )
             docRef.set(payload).await()
-            Result.success(docId)
+            Result.success(safeDocId)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -678,9 +724,9 @@ class FonoRepository(
         var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/slotBlocks/$blockId"
         return try {
             val uid = requireUserId()
-            require(blockId.isNotBlank())
+            val safeBlockId = requireValidDocId(blockId, "ID do bloqueio inválido.")
             val docRef = db.collection("users").document(uid)
-                .collection("slotBlocks").document(blockId)
+                .collection("slotBlocks").document(safeBlockId)
             docPath = docRef.path
             docRef.delete().await()
             Result.success(Unit)
@@ -699,9 +745,9 @@ class FonoRepository(
         var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/appointments/$appointmentId"
         return try {
             val uid = requireUserId()
-            require(appointmentId.isNotBlank())
+            val safeApptId = requireValidDocId(appointmentId, "ID do agendamento inválido.")
             val docRef = db.collection("users").document(uid)
-                .collection("appointments").document(appointmentId)
+                .collection("appointments").document(safeApptId)
             docPath = docRef.path
             docRef.update(
                 mapOf(
@@ -725,9 +771,9 @@ class FonoRepository(
         var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/appointments/$appointmentId"
         return try {
             val uid = requireUserId()
-            require(appointmentId.isNotBlank())
+            val safeApptId = requireValidDocId(appointmentId, "ID do agendamento inválido.")
             val docRef = db.collection("users").document(uid)
-                .collection("appointments").document(appointmentId)
+                .collection("appointments").document(safeApptId)
             docPath = docRef.path
             docRef.update(
                 mapOf(
@@ -748,9 +794,9 @@ class FonoRepository(
         var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/appointments/$appointmentId"
         return try {
             val uid = requireUserId()
-            require(appointmentId.isNotBlank())
+            val safeApptId = requireValidDocId(appointmentId, "ID do agendamento inválido.")
             val docRef = db.collection("users").document(uid)
-                .collection("appointments").document(appointmentId)
+                .collection("appointments").document(safeApptId)
             docPath = docRef.path
             docRef.delete().await()
             Result.success(Unit)
@@ -785,7 +831,11 @@ class FonoRepository(
                     "frequencyPerWeek" to item.frequencyPerWeek.coerceIn(1L, 21L)
                 )
             }
-            val cleanPatientId = patientId.trim().take(128)
+            val cleanPatientId = if (patientId.isBlank()) {
+                ""
+            } else {
+                requireValidDocId(patientId, "ID do paciente inválido.")
+            }
             val cleanPatientName = if (cleanPatientId.isBlank()) "" else patientName.trim().take(100)
             val cleanObjective = clinicalObjective.trim().take(400)
 
@@ -806,7 +856,8 @@ class FonoRepository(
                 docRef.set(payload).await()
                 Result.success(docRef.id)
             } else {
-                val docRef = collectionRef.document(editingListId)
+                val safeListId = requireValidDocId(editingListId, "ID da lista inválido.")
+                val docRef = collectionRef.document(safeListId)
                 docPath = docRef.path
                 docRef.update(
                     mapOf(
@@ -818,7 +869,7 @@ class FonoRepository(
                         "updatedAt" to FieldValue.serverTimestamp()
                     )
                 ).await()
-                Result.success(editingListId)
+                Result.success(safeListId)
             }
         } catch (e: CancellationException) {
             throw e
@@ -833,9 +884,9 @@ class FonoRepository(
         var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/exerciseLists/$listId"
         return try {
             val uid = requireUserId()
-            require(listId.isNotBlank())
+            val safeListId = requireValidDocId(listId, "ID da lista inválido.")
             val docRef = db.collection("users").document(uid)
-                .collection("exerciseLists").document(listId)
+                .collection("exerciseLists").document(safeListId)
             docPath = docRef.path
             docRef.delete().await()
             Result.success(Unit)
@@ -854,7 +905,7 @@ class FonoRepository(
         var docPath = "users/${auth.currentUser?.uid ?: "unauthenticated"}/exercises"
         return try {
             val uid = requireUserId()
-            require(patientId.isNotBlank()) { "Paciente não selecionado." }
+            val safePatientId = requireValidDocId(patientId, "Paciente não selecionado.")
             require(items.isNotEmpty()) { "A lista não possui exercícios." }
 
             val exercisesCol = db.collection("users").document(uid).collection("exercises")
@@ -865,7 +916,7 @@ class FonoRepository(
                 docPath = docRef.path
                 val payload = mapOf(
                     "userId" to uid,
-                    "patientId" to patientId,
+                    "patientId" to safePatientId,
                     "title" to item.title.trim().take(100).ifBlank { "Exercício de Voz" },
                     "category" to item.exerciseCategory.name,
                     "instructions" to item.instructions.trim().take(1000).ifBlank { "Executar conforme orientação clínica." },
@@ -966,7 +1017,7 @@ class FonoRepository(
         var docPath = "patientAccessCodes"
         return try {
             val uid = requireUserId()
-            require(patient.id.isNotBlank()) { "Paciente inválido." }
+            val safePatientId = requireValidDocId(patient.id, "Paciente inválido.")
 
             val newCode = AccessCodeGenerator.generate()
             val codeRef = db.collection("patientAccessCodes").document(newCode)
@@ -974,7 +1025,7 @@ class FonoRepository(
 
             val existingActive = db.collection("patientAccessCodes")
                 .whereEqualTo("therapistId", uid)
-                .whereEqualTo("patientId", patient.id)
+                .whereEqualTo("patientId", safePatientId)
                 .get()
                 .await()
 
@@ -996,7 +1047,7 @@ class FonoRepository(
                 "therapistId" to uid,
                 "therapistName" to therapistName.trim().ifBlank { "Fonoaudióloga" }.take(100),
                 "clinicName" to clinicName.trim().take(100),
-                "patientId" to patient.id,
+                "patientId" to safePatientId,
                 "patientName" to patient.fullName.trim().ifBlank { "Paciente" }.take(100),
                 "clinicalFocus" to patient.clinicalFocus.trim().take(120),
                 "weeklyGoalMinutes" to patient.weeklyGoalMinutes.coerceIn(10L, 1000L),
@@ -1029,8 +1080,8 @@ class FonoRepository(
         var docPath = "patientAccessCodes/$normalized"
         return try {
             requireUserId()
-            require(normalized.isNotBlank())
-            val docRef = db.collection("patientAccessCodes").document(normalized)
+            val safeCode = requireValidDocId(normalized, "Código de acesso inválido.")
+            val docRef = db.collection("patientAccessCodes").document(safeCode)
             docPath = docRef.path
             docRef.update(
                 mapOf(
@@ -1099,7 +1150,7 @@ class FonoRepository(
         return try {
             val uid = auth.currentUser?.uid
                 ?: throw IllegalStateException("Conecte sua conta Google antes de validar o código.")
-            require(normalized.length in 6..16) {
+            require(normalized.length in 6..16 && VALID_DOC_ID_REGEX.matches(normalized)) {
                 "Digite um código válido com 6 a 16 caracteres (ex.: FV8K4M2P)."
             }
 
@@ -1156,7 +1207,7 @@ class FonoRepository(
     fun observeRedeemedPatientAccessCode(rawCode: String): Flow<PatientAccessCode?> = flow {
         val normalized = AccessCodeGenerator.normalize(rawCode)
         val uid = auth.currentUser?.uid
-        if (normalized.isBlank() || uid.isNullOrBlank()) {
+        if (normalized.isBlank() || uid.isNullOrBlank() || !VALID_DOC_ID_REGEX.matches(normalized)) {
             emit(null)
             return@flow
         }
@@ -1190,5 +1241,9 @@ class FonoRepository(
                     }
                 }
         )
+    }
+
+    private companion object {
+        val VALID_DOC_ID_REGEX = Regex("^[a-zA-Z0-9_\\-]{1,128}$")
     }
 }

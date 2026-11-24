@@ -39,6 +39,7 @@
         "guardianEmail": { "type": "string" },
         "status": { "type": "string", "enum": ["ATIVO", "PAUSA", "ALTA"] },
         "weeklyGoalMinutes": { "type": "integer" },
+        "weeklyExerciseFrequencyGoal": { "type": "integer" },
         "initialNotes": { "type": "string" },
         "medicalHistory": { "type": "string" },
         "mainComplaints": { "type": "string" },

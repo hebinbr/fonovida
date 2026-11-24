@@ -64,6 +64,7 @@ import com.example.data.model.EvolutionSession
 import com.example.data.model.Patient
 import com.example.data.model.PatientAccessCode
 import com.example.data.model.PatientStatus
+import com.example.data.model.computeWeeklyExerciseFrequencyProgress
 import com.example.ui.theme.StatusSuccess
 import com.example.ui.theme.StatusSuccessBg
 import com.example.ui.theme.StatusWarning
@@ -278,6 +279,10 @@ fun PatientsScreen(
                         val weeklyMinutes = patSessions
                             .filter { it.sessionDateMillis >= weekAgoMillis }
                             .sumOf { it.durationMinutes }
+                        val freqProgress = computeWeeklyExerciseFrequencyProgress(
+                            sessions = patSessions,
+                            targetFrequencyGoal = patient.effectiveWeeklyFrequencyGoal
+                        )
                         val goalProgress = (weeklyMinutes.toFloat() / patient.weeklyGoalMinutes.coerceAtLeast(1).toFloat())
                             .coerceIn(0f, 1f)
 
@@ -288,6 +293,7 @@ fun PatientsScreen(
                             sessionCount = patSessions.size,
                             latestClarity = latestSession?.vocalClarityScore?.toInt(),
                             weeklyMinutes = weeklyMinutes.toInt(),
+                            completedExercisesWeek = freqProgress.completedSessions,
                             goalProgress = goalProgress,
                             activeCode = activeCode,
                             onClick = { onPatientClick(patient.id) },
@@ -309,6 +315,7 @@ private fun PatientSummaryCard(
     sessionCount: Int,
     latestClarity: Int?,
     weeklyMinutes: Int,
+    completedExercisesWeek: Int = 0,
     goalProgress: Float,
     activeCode: String? = null,
     onClick: () -> Unit,
@@ -445,7 +452,7 @@ private fun PatientSummaryCard(
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = "Meta semanal: $weeklyMinutes / ${patient.weeklyGoalMinutes} min",
+                    text = "Meta: $completedExercisesWeek/${patient.effectiveWeeklyFrequencyGoal} exerc. • $weeklyMinutes/${patient.weeklyGoalMinutes} min",
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

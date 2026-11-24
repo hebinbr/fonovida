@@ -28,6 +28,15 @@ object ClinicalPdfExporter {
     private const val PAGE_WIDTH = 595
     private const val PAGE_HEIGHT = 842
     private const val MARGIN = 40f
+    private const val REPORT_CACHE_TTL_MS = 24L * 3_600_000L
+
+    private fun pruneStaleReports(reportsDir: File, nowMillis: Long = System.currentTimeMillis()) {
+        reportsDir.listFiles()?.forEach { candidate ->
+            if (candidate.isFile && (nowMillis - candidate.lastModified()) > REPORT_CACHE_TTL_MS) {
+                candidate.delete()
+            }
+        }
+    }
 
     fun generateAndShareReport(
         context: Context,
@@ -105,10 +114,12 @@ object ClinicalPdfExporter {
         periodLabel: String = "Todo o histórico"
     ): File {
         val reportsDir = File(context.cacheDir, "reports").apply { mkdirs() }
+        pruneStaleReports(reportsDir)
         val safePatientSlug = patient.fullName
             .lowercase(Locale("pt", "BR"))
             .replace(Regex("[^a-z0-9]+"), "_")
             .trim('_')
+            .take(40)
             .ifBlank { "paciente" }
         val file = File(reportsDir, "relatorio_fonovida_${safePatientSlug}_${System.currentTimeMillis()}.pdf")
 
@@ -528,10 +539,12 @@ object ClinicalPdfExporter {
     ): Result<Uri> {
         return try {
             val reportsDir = File(context.cacheDir, "reports").apply { mkdirs() }
+            pruneStaleReports(reportsDir)
             val safeSlug = list.title
                 .lowercase(Locale("pt", "BR"))
                 .replace(Regex("[^a-z0-9]+"), "_")
                 .trim('_')
+                .take(40)
                 .ifBlank { "lista" }
             val file = File(reportsDir, "lista_exercicios_${safeSlug}_${System.currentTimeMillis()}.pdf")
 

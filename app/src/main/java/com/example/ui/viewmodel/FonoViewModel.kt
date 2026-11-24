@@ -170,6 +170,7 @@ class FonoViewModel(
         guardianEmail: String,
         status: PatientStatus,
         weeklyGoalMinutes: Int,
+        weeklyExerciseFrequencyGoal: Int = 5,
         initialNotes: String,
         dailyExerciseReminderEnabled: Boolean,
         reminderHour: Int,
@@ -187,6 +188,7 @@ class FonoViewModel(
                     guardianPhone = guardianPhone,
                     guardianEmail = guardianEmail,
                     weeklyGoalMinutes = weeklyGoalMinutes,
+                    weeklyExerciseFrequencyGoal = weeklyExerciseFrequencyGoal,
                     initialNotes = initialNotes,
                     dailyExerciseReminderEnabled = dailyExerciseReminderEnabled,
                     reminderHour = reminderHour,
@@ -203,6 +205,7 @@ class FonoViewModel(
                     guardianEmail = guardianEmail,
                     status = status,
                     weeklyGoalMinutes = weeklyGoalMinutes,
+                    weeklyExerciseFrequencyGoal = weeklyExerciseFrequencyGoal,
                     initialNotes = initialNotes,
                     dailyExerciseReminderEnabled = dailyExerciseReminderEnabled,
                     reminderHour = reminderHour,
@@ -232,6 +235,28 @@ class FonoViewModel(
                 onSuccess(pid)
             }.onFailure { err ->
                 _events.tryEmit(err.localizedMessage ?: "Não foi possível salvar o paciente.")
+            }
+        }
+    }
+
+    fun updatePatientWeeklyFrequencyGoal(
+        patientId: String,
+        frequencyGoal: Int,
+        onSuccess: () -> Unit = {}
+    ) {
+        val safeGoal = frequencyGoal.coerceIn(1, 21)
+        viewModelScope.launch {
+            _isBusy.value = true
+            val result = repository.updatePatientWeeklyFrequencyGoal(
+                patientId = patientId,
+                frequencyGoal = safeGoal
+            )
+            _isBusy.value = false
+            result.onSuccess {
+                _events.tryEmit("Meta semanal atualizada para $safeGoal exercício(s)/semana.")
+                onSuccess()
+            }.onFailure { err ->
+                _events.tryEmit(err.localizedMessage ?: "Não foi possível atualizar a meta semanal.")
             }
         }
     }

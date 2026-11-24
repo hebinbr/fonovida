@@ -5,6 +5,11 @@ import com.google.firebase.Timestamp
 import com.google.firebase.firestore.DocumentId
 import com.google.firebase.firestore.IgnoreExtraProperties
 import com.google.firebase.firestore.ServerTimestamp
+import java.text.SimpleDateFormat
+import java.util.Calendar
+import java.util.Date
+import java.util.Locale
+import kotlin.math.roundToInt
 
 enum class PatientStatus(val label: String) {
     ATIVO("Em Acompanhamento"),
@@ -85,6 +90,7 @@ data class Patient(
     val guardianEmail: String = "",
     val status: String = PatientStatus.ATIVO.name,
     val weeklyGoalMinutes: Long = 60L,
+    val weeklyExerciseFrequencyGoal: Long = 5L,
     val initialNotes: String = "",
     val medicalHistory: String = "",
     val mainComplaints: String = "",
@@ -100,6 +106,100 @@ data class Patient(
 
     val hasClinicalSheetContent: Boolean
         get() = medicalHistory.isNotBlank() || mainComplaints.isNotBlank() || therapeuticGoals.isNotBlank()
+
+    val effectiveWeeklyFrequencyGoal: Int
+        get() = weeklyExerciseFrequencyGoal.toInt().coerceIn(1, 21)
+}
+
+data class DayExerciseActivity(
+    val dayLabel: String,
+    val sessionsCount: Int,
+    val isToday: Boolean,
+    val isFutureDay: Boolean
+)
+
+data class WeeklyExerciseFrequencyProgress(
+    val completedSessions: Int,
+    val targetFrequencyGoal: Int,
+    val completionRatio: Float,
+    val percentComplete: Int,
+    val remainingCount: Int,
+    val isGoalMet: Boolean,
+    val activePracticeDaysCount: Int,
+    val totalMinutesThisWeek: Int,
+    val weekRangeLabel: String,
+    val dailyBreakdown: List<DayExerciseActivity>
+)
+
+fun computeWeeklyExerciseFrequencyProgress(
+    sessions: List<EvolutionSession>,
+    targetFrequencyGoal: Int,
+    nowMillis: Long = System.currentTimeMillis()
+): WeeklyExerciseFrequencyProgress {
+    val safeTarget = targetFrequencyGoal.coerceIn(1, 21)
+
+    val cal = Calendar.getInstance(Locale("pt", "BR")).apply {
+        timeInMillis = nowMillis
+        firstDayOfWeek = Calendar.MONDAY
+    }
+    // Start of current week (Monday 00:00:00.000)
+    val weekStart = (cal.clone() as Calendar).apply {
+        set(Calendar.DAY_OF_WEEK, Calendar.MONDAY)
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+        // If today is Sunday and Calendar.DAY_OF_WEEK moved forward depending on locale edge cases,
+        // ensure weekStart <= nowMillis
+        if (timeInMillis > nowMillis) {
+            add(Calendar.DAY_OF_YEAR, -7)
+        }
+    }
+    val weekEnd = (weekStart.clone() as Calendar).apply {
+        add(Calendar.DAY_OF_YEAR, 7)
+    }
+
+    val startMillis = weekStart.timeInMillis
+    val endMillis = weekEnd.timeInMillis
+
+    val weekSessions = sessions.filter { it.sessionDateMillis in startMillis until endMillis }
+    val completed = weekSessions.size
+    val totalMinutes = weekSessions.sumOf { it.durationMinutes.coerceAtLeast(0L) }.toInt()
+
+    val dayLabels = listOf("Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom")
+    val todayDayIndex = (((nowMillis - startMillis) / 86_400_000L).toInt()).coerceIn(0, 6)
+
+    val dailyBreakdown = dayLabels.mapIndexed { idx, label ->
+        val dayStart = startMillis + idx * 86_400_000L
+        val dayEnd = dayStart + 86_400_000L
+        val dayCount = weekSessions.count { it.sessionDateMillis in dayStart until dayEnd }
+        DayExerciseActivity(
+            dayLabel = label,
+            sessionsCount = dayCount,
+            isToday = idx == todayDayIndex,
+            isFutureDay = idx > todayDayIndex
+        )
+    }
+
+    val rangeFmt = SimpleDateFormat("dd/MM", Locale("pt", "BR"))
+    val sundayEndCal = (weekStart.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 6) }
+    val weekRangeLabel = "${rangeFmt.format(Date(startMillis))} – ${rangeFmt.format(sundayEndCal.time)}"
+
+    val ratio = (completed.toFloat() / safeTarget.toFloat()).coerceIn(0f, 1f)
+    val pct = ((completed.toFloat() / safeTarget.toFloat()) * 100f).roundToInt().coerceAtLeast(0)
+
+    return WeeklyExerciseFrequencyProgress(
+        completedSessions = completed,
+        targetFrequencyGoal = safeTarget,
+        completionRatio = ratio,
+        percentComplete = pct,
+        remainingCount = (safeTarget - completed).coerceAtLeast(0),
+        isGoalMet = completed >= safeTarget,
+        activePracticeDaysCount = dailyBreakdown.count { it.sessionsCount > 0 },
+        totalMinutesThisWeek = totalMinutes,
+        weekRangeLabel = weekRangeLabel,
+        dailyBreakdown = dailyBreakdown
+    )
 }
 
 @Keep

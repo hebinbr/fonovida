@@ -86,10 +86,24 @@ class MainActivity : ComponentActivity() {
 
     private fun handleReminderWhatsAppIntent(intent: Intent?) {
         val waUri = intent?.getStringExtra(ReminderScheduler.EXTRA_WHATSAPP_URI) ?: return
-        val apptId = intent.getStringExtra(ReminderScheduler.EXTRA_WHATSAPP_APPT_ID).orEmpty()
+        val rawApptId = intent.getStringExtra(ReminderScheduler.EXTRA_WHATSAPP_APPT_ID).orEmpty()
+        val token = intent.getStringExtra(ReminderScheduler.EXTRA_WHATSAPP_TOKEN)
         intent.removeExtra(ReminderScheduler.EXTRA_WHATSAPP_URI)
         intent.removeExtra(ReminderScheduler.EXTRA_WHATSAPP_APPT_ID)
-        pendingWhatsAppFlow.value = PendingWhatsAppDispatch(waUri, apptId)
+        intent.removeExtra(ReminderScheduler.EXTRA_WHATSAPP_TOKEN)
+
+        if (!ReminderScheduler.isAllowedWhatsAppUri(waUri)) return
+        val safeApptId = if (rawApptId.isBlank()) {
+            ""
+        } else if (ReminderScheduler.isValidSafeDocumentId(rawApptId)) {
+            rawApptId
+        } else {
+            return
+        }
+        if (!ReminderScheduler.verifyIntentDispatchToken(this, waUri, safeApptId, token)) {
+            return
+        }
+        pendingWhatsAppFlow.value = PendingWhatsAppDispatch(waUri, safeApptId)
     }
 }
 

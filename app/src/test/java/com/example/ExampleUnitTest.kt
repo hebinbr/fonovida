@@ -355,4 +355,79 @@ class ExampleUnitTest {
         )
         assertTrue(filledPatient.hasClinicalSheetContent)
     }
+
+    @Test
+    fun weeklyExerciseFrequencyGoalProgressTracksCompletedVsGoal() {
+        val defaultPat = Patient(fullName = "Sofia Mendes")
+        assertEquals(5, defaultPat.effectiveWeeklyFrequencyGoal)
+        assertEquals(1, defaultPat.copy(weeklyExerciseFrequencyGoal = 0L).effectiveWeeklyFrequencyGoal)
+        assertEquals(21, defaultPat.copy(weeklyExerciseFrequencyGoal = 50L).effectiveWeeklyFrequencyGoal)
+
+        // Wednesday 2026-11-25 at 12:00:00 local time
+        val wedCal = java.util.Calendar.getInstance(java.util.Locale("pt", "BR")).apply {
+            set(2026, java.util.Calendar.NOVEMBER, 25, 12, 0, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        val nowMillis = wedCal.timeInMillis
+        val monMorning = (wedCal.clone() as java.util.Calendar).apply { add(java.util.Calendar.DAY_OF_YEAR, -2) }.timeInMillis
+        val tueMorning = (wedCal.clone() as java.util.Calendar).apply { add(java.util.Calendar.DAY_OF_YEAR, -1) }.timeInMillis
+        val lastWeekSession = (wedCal.clone() as java.util.Calendar).apply { add(java.util.Calendar.DAY_OF_YEAR, -10) }.timeInMillis
+
+        val sessions = listOf(
+            EvolutionSession(id = "old", durationMinutes = 20L, sessionDateMillis = lastWeekSession),
+            EvolutionSession(id = "mon1", durationMinutes = 10L, sessionDateMillis = monMorning),
+            EvolutionSession(id = "mon2", durationMinutes = 12L, sessionDateMillis = monMorning + 3600_000L),
+            EvolutionSession(id = "tue1", durationMinutes = 15L, sessionDateMillis = tueMorning),
+            EvolutionSession(id = "wed1", durationMinutes = 10L, sessionDateMillis = nowMillis - 600_000L)
+        )
+
+        val partial = com.example.data.model.computeWeeklyExerciseFrequencyProgress(
+            sessions = sessions,
+            targetFrequencyGoal = 5,
+            nowMillis = nowMillis
+        )
+        assertEquals(4, partial.completedSessions)
+        assertEquals(5, partial.targetFrequencyGoal)
+        assertEquals(80, partial.percentComplete)
+        assertEquals(1, partial.remainingCount)
+        assertFalse(partial.isGoalMet)
+        assertEquals(3, partial.activePracticeDaysCount)
+        assertEquals(47, partial.totalMinutesThisWeek)
+        assertEquals(7, partial.dailyBreakdown.size)
+        assertEquals(2, partial.dailyBreakdown[0].sessionsCount) // Seg
+        assertEquals(1, partial.dailyBreakdown[1].sessionsCount) // Ter
+        assertEquals(1, partial.dailyBreakdown[2].sessionsCount) // Qua (today)
+        assertTrue(partial.dailyBreakdown[2].isToday)
+        assertTrue(partial.dailyBreakdown[6].isFutureDay)
+
+        val goalMet = com.example.data.model.computeWeeklyExerciseFrequencyProgress(
+            sessions = sessions,
+            targetFrequencyGoal = 4,
+            nowMillis = nowMillis
+        )
+        assertTrue(goalMet.isGoalMet)
+        assertEquals(0, goalMet.remainingCount)
+        assertEquals(100, goalMet.percentComplete)
+    }
+
+    @Test
+    fun securityHelpersValidateWhatsAppUrisAndFirestoreDocumentIds() {
+        assertTrue(ReminderScheduler.isAllowedWhatsAppUri("https://wa.me/5511988887777?text=Oi"))
+        assertTrue(ReminderScheduler.isAllowedWhatsAppUri("https://wa.me/?text=Oi"))
+        assertFalse(ReminderScheduler.isAllowedWhatsAppUri("http://wa.me/5511988887777"))
+        assertFalse(ReminderScheduler.isAllowedWhatsAppUri("https://evil.com/5511988887777"))
+        assertFalse(ReminderScheduler.isAllowedWhatsAppUri("https://wa.me@evil.com/1234567890"))
+        assertFalse(ReminderScheduler.isAllowedWhatsAppUri("javascript:alert(1)"))
+        assertFalse(ReminderScheduler.isAllowedWhatsAppUri("file:///data/data/com.example/shared_prefs"))
+        assertFalse(ReminderScheduler.isAllowedWhatsAppUri("https://wa.me:8443/5511988887777"))
+        assertFalse(ReminderScheduler.isAllowedWhatsAppUri("https://wa.me/../../admin"))
+
+        assertTrue(ReminderScheduler.isValidSafeDocumentId("appt_123-ABC"))
+        assertFalse(ReminderScheduler.isValidSafeDocumentId(""))
+        assertFalse(ReminderScheduler.isValidSafeDocumentId("   "))
+        assertFalse(ReminderScheduler.isValidSafeDocumentId("../users/other"))
+        assertFalse(ReminderScheduler.isValidSafeDocumentId("foo/bar"))
+        assertFalse(ReminderScheduler.isValidSafeDocumentId("a".repeat(129)))
+    }
 }
+

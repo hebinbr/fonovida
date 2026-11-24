@@ -58,12 +58,19 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material.icons.rounded.Check
 import androidx.compose.material.icons.rounded.ContentCopy
+import androidx.compose.material.icons.rounded.Flag
 import androidx.compose.material.icons.rounded.Visibility
 import androidx.compose.material.icons.rounded.VpnKey
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.unit.sp
 import com.example.data.model.CustomExerciseList
 import com.example.data.model.EvolutionSession
@@ -73,10 +80,13 @@ import com.example.data.model.PatientAccessCode
 import com.example.data.model.ReportTimeframe
 import com.example.data.model.TherapistProfile
 import com.example.data.model.VoiceExercise
+import com.example.data.model.computeWeeklyExerciseFrequencyProgress
 import com.example.ui.components.CategoryPerformanceCard
 import com.example.ui.components.ProgressDeltaCard
 import com.example.ui.components.TmfProgressionChartCard
 import com.example.ui.components.VoiceEvolutionChartCard
+import com.example.ui.theme.StatusSuccess
+import com.example.ui.theme.StatusSuccessBg
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -94,6 +104,7 @@ fun PatientDetailScreen(
     isAccessCodeBusy: Boolean = false,
     onBack: () -> Unit,
     onOpenClinicalSheet: () -> Unit = {},
+    onDefineWeeklyGoal: () -> Unit = {},
     onEditPatient: () -> Unit,
     onDeletePatient: () -> Unit,
     onGenerateAccessCode: () -> Unit = {},
@@ -247,6 +258,20 @@ fun PatientDetailScreen(
                     ) {
                         item {
                             PatientKpiSummaryRow(sessions = sessions)
+                        }
+                        item {
+                            WeeklyExerciseGoalProgressCard(
+                                patient = patient,
+                                sessions = sessions,
+                                onDefineGoal = onDefineWeeklyGoal,
+                                onLogSession = {
+                                    val firstEx = exercises.firstOrNull { it.activeFlag }
+                                    onLogSession(
+                                        firstEx?.title ?: "",
+                                        firstEx?.exerciseCategory ?: ExerciseCategory.AQUECIMENTO
+                                    )
+                                }
+                            )
                         }
                         item {
                             PatientClinicalSheetCard(
@@ -1160,4 +1185,249 @@ private fun PatientClinicalSheetCard(
         }
     }
 }
+
+@Composable
+private fun WeeklyExerciseGoalProgressCard(
+    patient: Patient,
+    sessions: List<EvolutionSession>,
+    onDefineGoal: () -> Unit,
+    onLogSession: () -> Unit
+) {
+    val progress = remember(sessions, patient.effectiveWeeklyFrequencyGoal) {
+        computeWeeklyExerciseFrequencyProgress(
+            sessions = sessions,
+            targetFrequencyGoal = patient.effectiveWeeklyFrequencyGoal
+        )
+    }
+
+    Card(
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("weekly_goal_comparison_card")
+    ) {
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Surface(
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                        shape = RoundedCornerShape(10.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.Flag,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                            modifier = Modifier
+                                .padding(8.dp)
+                                .size(20.dp)
+                        )
+                    }
+                    Spacer(Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "Meta de Frequência Semanal",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = "Semana ${progress.weekRangeLabel}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                OutlinedButton(
+                    onClick = onDefineGoal,
+                    shape = RoundedCornerShape(10.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp),
+                    modifier = Modifier
+                        .height(48.dp)
+                        .testTag("define_weekly_frequency_goal_btn")
+                ) {
+                    Icon(
+                        imageVector = Icons.Rounded.Edit,
+                        contentDescription = null,
+                        modifier = Modifier.size(15.dp)
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text("Definir Meta", style = MaterialTheme.typography.labelMedium)
+                }
+            }
+
+            Surface(
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(14.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = "Realizados vs. Meta estabelecida",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Spacer(Modifier.height(2.dp))
+                            Row(verticalAlignment = Alignment.Bottom) {
+                                Text(
+                                    text = "${progress.completedSessions}",
+                                    style = MaterialTheme.typography.headlineMedium,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (progress.isGoalMet) StatusSuccess else MaterialTheme.colorScheme.primary
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = "de ${progress.targetFrequencyGoal} exercícios",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.padding(bottom = 3.dp)
+                                )
+                            }
+                        }
+
+                        Column(horizontalAlignment = Alignment.End) {
+                            Surface(
+                                color = if (progress.isGoalMet) StatusSuccessBg else MaterialTheme.colorScheme.primaryContainer,
+                                shape = RoundedCornerShape(50)
+                            ) {
+                                Text(
+                                    text = if (progress.isGoalMet) "Meta atingida!" else "Faltam ${progress.remainingCount}",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = if (progress.isGoalMet) StatusSuccess else MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp)
+                                )
+                            }
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = "${progress.percentComplete}% concluído",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+
+                    LinearProgressIndicator(
+                        progress = { progress.completionRatio },
+                        color = if (progress.isGoalMet) StatusSuccess else MaterialTheme.colorScheme.primary,
+                        trackColor = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(10.dp)
+                            .clip(RoundedCornerShape(50))
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                progress.dailyBreakdown.forEach { day ->
+                    val hasPractice = day.sessionsCount > 0
+                    val circleBg = when {
+                        hasPractice -> StatusSuccess
+                        day.isToday -> MaterialTheme.colorScheme.primaryContainer
+                        else -> MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+                    }
+                    val borderMod = if (day.isToday && !hasPractice) {
+                        Modifier.border(1.5.dp, MaterialTheme.colorScheme.primary, CircleShape)
+                    } else {
+                        Modifier
+                    }
+
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            contentAlignment = Alignment.Center,
+                            modifier = Modifier
+                                .size(32.dp)
+                                .clip(CircleShape)
+                                .background(circleBg)
+                                .then(borderMod)
+                        ) {
+                            if (hasPractice) {
+                                if (day.sessionsCount > 1) {
+                                    Text(
+                                        text = "${day.sessionsCount}",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = MaterialTheme.colorScheme.onPrimary
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.Check,
+                                        contentDescription = "${day.dayLabel}: exercício realizado",
+                                        tint = MaterialTheme.colorScheme.onPrimary,
+                                        modifier = Modifier.size(16.dp)
+                                    )
+                                }
+                            } else {
+                                Text(
+                                    text = "—",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = if (day.isFutureDay) {
+                                        MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                                    } else {
+                                        MaterialTheme.colorScheme.onSurfaceVariant
+                                    }
+                                )
+                            }
+                        }
+                        Text(
+                            text = day.dayLabel,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = if (day.isToday) FontWeight.Bold else FontWeight.Normal,
+                            color = if (day.isToday) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "${progress.activePracticeDaysCount} dia(s) ativo(s) • ${progress.totalMinutesThisWeek} min na semana",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.weight(1f)
+                )
+                TextButton(
+                    onClick = onLogSession,
+                    modifier = Modifier.testTag("quick_log_from_goal_card_btn")
+                ) {
+                    Text("+ Registrar")
+                }
+            }
+        }
+    }
+}
+
 

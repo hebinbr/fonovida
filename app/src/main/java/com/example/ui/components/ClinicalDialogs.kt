@@ -105,6 +105,7 @@ fun PatientFormDialog(
         guardianEmail: String,
         status: PatientStatus,
         weeklyGoalMinutes: Int,
+        weeklyExerciseFrequencyGoal: Int,
         initialNotes: String,
         dailyReminder: Boolean,
         reminderHour: Int,
@@ -119,6 +120,7 @@ fun PatientFormDialog(
     var guardianEmail by remember { mutableStateOf(initialPatient?.guardianEmail ?: "") }
     var status by remember { mutableStateOf(initialPatient?.patientStatus ?: PatientStatus.ATIVO) }
     var weeklyGoal by remember { mutableStateOf((initialPatient?.weeklyGoalMinutes ?: 60L).toString()) }
+    var weeklyFrequencyText by remember { mutableStateOf((initialPatient?.effectiveWeeklyFrequencyGoal ?: 5).toString()) }
     var notes by remember { mutableStateOf(initialPatient?.initialNotes ?: "") }
     var dailyReminder by remember { mutableStateOf(initialPatient?.dailyExerciseReminderEnabled ?: true) }
     var reminderHour by remember { mutableIntStateOf((initialPatient?.reminderHour ?: 18L).toInt()) }
@@ -164,6 +166,27 @@ fun PatientFormDialog(
                         singleLine = true,
                         modifier = Modifier.weight(1.3f)
                     )
+                }
+                OutlinedTextField(
+                    value = weeklyFrequencyText,
+                    onValueChange = { weeklyFrequencyText = it.filter { ch -> ch.isDigit() }.take(2) },
+                    label = { Text("Meta de frequência semanal (exercícios/sem)") },
+                    placeholder = { Text("Ex.: 5") },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                    singleLine = true,
+                    modifier = Modifier.fillMaxWidth().testTag("patient_frequency_goal_input")
+                )
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(3, 5, 7, 10, 14).forEach { preset ->
+                        FilterChip(
+                            selected = weeklyFrequencyText.toIntOrNull() == preset,
+                            onClick = { weeklyFrequencyText = preset.toString() },
+                            label = { Text("${preset}x/sem") }
+                        )
+                    }
                 }
                 OutlinedTextField(
                     value = clinicalFocus,
@@ -268,9 +291,11 @@ fun PatientFormDialog(
                 onClick = {
                     val age = ageText.toIntOrNull() ?: 0
                     val goal = weeklyGoal.toIntOrNull() ?: 60
+                    val freqGoal = weeklyFrequencyText.toIntOrNull() ?: 0
                     when {
                         fullName.trim().length < 2 -> errorMsg = "Informe o nome do paciente."
                         age !in 1..120 -> errorMsg = "Idade válida entre 1 e 120."
+                        freqGoal !in 1..21 -> errorMsg = "Meta de frequência semanal entre 1 e 21 exercícios."
                         clinicalFocus.trim().length < 2 -> errorMsg = "Informe o foco clínico."
                         guardianName.trim().length < 2 -> errorMsg = "Informe o nome do responsável."
                         else -> onConfirm(
@@ -282,6 +307,7 @@ fun PatientFormDialog(
                             guardianEmail,
                             status,
                             goal.coerceIn(10, 1000),
+                            freqGoal.coerceIn(1, 21),
                             notes,
                             dailyReminder,
                             reminderHour,
@@ -2031,6 +2057,150 @@ fun PatientAccessCodesDialog(
         confirmButton = {},
         dismissButton = {
             TextButton(onClick = onDismiss, enabled = !isBusy) { Text("Fechar") }
+        }
+    )
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+fun WeeklyFrequencyGoalDialog(
+    patient: Patient,
+    isBusy: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (Int) -> Unit
+) {
+    var goalValue by remember(patient.id) { mutableIntStateOf(patient.effectiveWeeklyFrequencyGoal) }
+    var goalText by remember(patient.id) { mutableStateOf(patient.effectiveWeeklyFrequencyGoal.toString()) }
+    var errorMsg by remember { mutableStateOf<String?>(null) }
+
+    AlertDialog(
+        onDismissRequest = { if (!isBusy) onDismiss() },
+        title = {
+            Text(
+                text = "Meta de Frequência Semanal",
+                style = MaterialTheme.typography.titleLarge
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Text(
+                    text = "Defina quantas execuções ou sessões de exercícios vocais ${patient.fullName} deve completar por semana.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilledTonalButton(
+                        onClick = {
+                            val next = (goalValue - 1).coerceIn(1, 21)
+                            goalValue = next
+                            goalText = next.toString()
+                            errorMsg = null
+                        },
+                        enabled = !isBusy && goalValue > 1,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("frequency_goal_minus_btn"),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                    ) {
+                        Text("-", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    }
+
+                    OutlinedTextField(
+                        value = goalText,
+                        onValueChange = { raw ->
+                            val digits = raw.filter { it.isDigit() }.take(2)
+                            goalText = digits
+                            digits.toIntOrNull()?.let { parsed ->
+                                if (parsed in 1..21) {
+                                    goalValue = parsed
+                                }
+                            }
+                            errorMsg = null
+                        },
+                        label = { Text("Exercícios / semana") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true,
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("weekly_frequency_goal_input")
+                    )
+
+                    FilledTonalButton(
+                        onClick = {
+                            val next = (goalValue + 1).coerceIn(1, 21)
+                            goalValue = next
+                            goalText = next.toString()
+                            errorMsg = null
+                        },
+                        enabled = !isBusy && goalValue < 21,
+                        modifier = Modifier
+                            .size(48.dp)
+                            .testTag("frequency_goal_plus_btn"),
+                        contentPadding = androidx.compose.foundation.layout.PaddingValues(0.dp)
+                    ) {
+                        Text("+", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Text(
+                    text = "Sugestões rápidas",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    listOf(3, 5, 7, 10, 14).forEach { preset ->
+                        FilterChip(
+                            selected = goalText.toIntOrNull() == preset,
+                            onClick = {
+                                goalValue = preset
+                                goalText = preset.toString()
+                                errorMsg = null
+                            },
+                            label = { Text("${preset}x/sem") }
+                        )
+                    }
+                }
+
+                errorMsg?.let {
+                    Text(
+                        text = it,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = {
+                    val parsed = goalText.toIntOrNull()
+                    if (parsed == null || parsed !in 1..21) {
+                        errorMsg = "Informe um valor entre 1 e 21 exercícios por semana."
+                    } else {
+                        onConfirm(parsed)
+                    }
+                },
+                enabled = !isBusy,
+                modifier = Modifier.testTag("save_weekly_frequency_goal_btn")
+            ) {
+                Text(if (isBusy) "Salvando..." else "Salvar Meta")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss, enabled = !isBusy) {
+                Text("Cancelar")
+            }
         }
     )
 }

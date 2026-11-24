@@ -26,32 +26,33 @@ fun handleFirestoreError(
         ?: causes.firstOrNull { it !is CancellationException }
         ?: exception
 
-    val auth = FirebaseAuth.getInstance()
-    val currentUser = auth.currentUser
+    val currentUser = FirebaseAuth.getInstance().currentUser
+    val providerIds = currentUser?.providerData
+        ?.mapNotNull { it.providerId.takeIf { id -> id.isNotBlank() } }
+        .orEmpty()
 
-    val providerInfoList = currentUser?.providerData?.map { provider ->
-        JSONObject().apply {
-            put("providerId", provider.providerId)
-            put("email", provider.email)
-        }
-    } ?: emptyList()
+    val errorCode = (rootError as? FirebaseFirestoreException)?.code?.name
+        ?: rootError::class.java.simpleName
+
+    val sanitizedCollection = path
+        ?.substringBefore('/')
+        ?.take(64)
+        .orEmpty()
 
     val authInfoJson = JSONObject().apply {
-        put("userId", currentUser?.uid)
-        put("email", currentUser?.email)
-        put("emailVerified", currentUser?.isEmailVerified)
-        put("tenantId", currentUser?.tenantId)
-        put("providerInfo", JSONArray(providerInfoList))
+        put("authenticated", currentUser != null)
+        put("emailVerified", currentUser?.isEmailVerified ?: false)
+        put("providers", JSONArray(providerIds))
     }
 
     val errorInfoJson = JSONObject().apply {
-        put("error", rootError.message ?: rootError.toString())
+        put("errorCode", errorCode)
         put("operationType", operationType.value)
-        put("path", path)
+        put("collection", sanitizedCollection)
         put("authInfo", authInfoJson)
     }
 
     val jsonString = errorInfoJson.toString()
-    Log.e("FirestoreError", "Firestore Error: $jsonString")
+    Log.e("FirestoreError", "Firestore operation failed: $jsonString")
     return jsonString
 }

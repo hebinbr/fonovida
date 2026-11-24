@@ -80,6 +80,7 @@ import com.example.ui.components.PickListForPatientDialog
 import com.example.ui.components.PickPatientForListDialog
 import com.example.ui.components.PrescribeExerciseDialog
 import com.example.ui.components.ScheduleAppointmentDialog
+import com.example.ui.components.WeeklyFrequencyGoalDialog
 import com.example.ui.screens.AgendaScreen
 import com.example.ui.screens.ClinicalSheetScreen
 import com.example.ui.screens.DashboardScreen
@@ -170,6 +171,7 @@ fun FonoAuthenticatedShell(
 
     var showPatientDialog by remember { mutableStateOf(false) }
     var editingPatient by remember { mutableStateOf<Patient?>(null) }
+    var editingWeeklyGoalPatient by remember { mutableStateOf<Patient?>(null) }
     var prescribeForPatientId by remember { mutableStateOf<String?>(null) }
     var logSessionTarget by remember {
         mutableStateOf<Triple<Patient, String, ExerciseCategory>?>(null)
@@ -554,6 +556,9 @@ fun FonoAuthenticatedShell(
                                             onOpenClinicalSheet = {
                                                 navController.navigate(RoutePatientClinicalSheet(patient.id))
                                             },
+                                            onDefineWeeklyGoal = {
+                                                editingWeeklyGoalPatient = patient
+                                            },
                                             onEditPatient = {
                                                 editingPatient = patient
                                                 showPatientDialog = true
@@ -796,7 +801,7 @@ fun FonoAuthenticatedShell(
                                         showPatientDialog = false
                                         editingPatient = null
                                     },
-                                    onConfirm = { name, age, focus, gName, gPhone, gEmail, status, goal, notes, dailyRem, rHour, rMin ->
+                                    onConfirm = { name, age, focus, gName, gPhone, gEmail, status, goal, freqGoal, notes, dailyRem, rHour, rMin ->
                                         if (dailyRem) ensureNotificationPermissionPrompted()
                                         viewModel.savePatient(
                                             context = context,
@@ -809,6 +814,7 @@ fun FonoAuthenticatedShell(
                                             guardianEmail = gEmail,
                                             status = status,
                                             weeklyGoalMinutes = goal,
+                                            weeklyExerciseFrequencyGoal = freqGoal,
                                             initialNotes = notes,
                                             dailyExerciseReminderEnabled = dailyRem,
                                             reminderHour = rHour,
@@ -817,6 +823,21 @@ fun FonoAuthenticatedShell(
                                                 showPatientDialog = false
                                                 editingPatient = null
                                             }
+                                        )
+                                    }
+                                )
+                            }
+
+                            editingWeeklyGoalPatient?.let { targetPat ->
+                                WeeklyFrequencyGoalDialog(
+                                    patient = targetPat,
+                                    isBusy = isBusy,
+                                    onDismiss = { editingWeeklyGoalPatient = null },
+                                    onConfirm = { newFreqGoal ->
+                                        viewModel.updatePatientWeeklyFrequencyGoal(
+                                            patientId = targetPat.id,
+                                            frequencyGoal = newFreqGoal,
+                                            onSuccess = { editingWeeklyGoalPatient = null }
                                         )
                                     }
                                 )

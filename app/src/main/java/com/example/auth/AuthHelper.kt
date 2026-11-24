@@ -107,11 +107,11 @@ fun onGoogleSignInClicked(
             } else {
                 onAuthError("Tipo de credencial inesperado recebido.")
             }
-        } catch (e: GetCredentialCancellationException) {
-            Log.w(AUTH_TAG, "Google Sign-In flow cancelled or dismissed: ${e.message}", e)
+        } catch (_: GetCredentialCancellationException) {
+            Log.w(AUTH_TAG, "Google Sign-In flow cancelled or dismissed")
             onAuthCancelled()
         } catch (e: Exception) {
-            Log.e(AUTH_TAG, "Google Sign-In failed", e)
+            Log.e(AUTH_TAG, "Google Sign-In failed (${e::class.java.simpleName})")
             onAuthError(e.localizedMessage ?: "Falha ao entrar com Google.")
         }
     }
@@ -127,7 +127,7 @@ fun signOut(
             try {
                 credentialManager.clearCredentialState(ClearCredentialStateRequest())
             } catch (e: Exception) {
-                Log.w(AUTH_TAG, "Failed to clear credential state: ${e.message}")
+                Log.w(AUTH_TAG, "Failed to clear credential state (${e::class.java.simpleName})")
             } finally {
                 Firebase.auth.signOut()
                 onSignOutComplete()

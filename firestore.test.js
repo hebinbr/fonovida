@@ -182,7 +182,7 @@ test("Patients: owner create, partial update, list succeed; cross-user & @Docume
     anaDb.collection("users").doc(THERAPIST_A).collection("patients").get()
   );
 
-  // Partial update preserving createdAt (including clinical sheet fields)
+  // Partial update preserving createdAt (including clinical sheet & weekly frequency goal)
   await assertSucceeds(
     anaDb
       .collection("users")
@@ -192,10 +192,35 @@ test("Patients: owner create, partial update, list succeed; cross-user & @Docume
       .update({
         status: "ALTA",
         weeklyGoalMinutes: 60,
+        weeklyExerciseFrequencyGoal: 7,
         medicalHistory: "Sem cirurgias laríngeas prévias. Videolaringoscopia em 10/2026.",
         mainComplaints: "Cansaço vocal ao final do dia letivo.",
         therapeuticGoals: "Aprimorar coordenação pneumofonoarticulatória e aumentar TMF para 14s.",
         updatedAt: pastDate(1000),
+      })
+  );
+
+  // Reject out-of-range weeklyExerciseFrequencyGoal (< 1 or > 21)
+  await assertFails(
+    anaDb
+      .collection("users")
+      .doc(THERAPIST_A)
+      .collection("patients")
+      .doc("pat_1")
+      .update({
+        weeklyExerciseFrequencyGoal: 0,
+        updatedAt: pastDate(950),
+      })
+  );
+  await assertFails(
+    anaDb
+      .collection("users")
+      .doc(THERAPIST_A)
+      .collection("patients")
+      .doc("pat_1")
+      .update({
+        weeklyExerciseFrequencyGoal: 22,
+        updatedAt: pastDate(920),
       })
   );
 
@@ -731,8 +756,15 @@ test("PatientAccessCodes: therapist generates/revokes code, patient redeems vali
   // Wrong code fails
   await assertFails(patientDb.collection("patientAccessCodes").doc("WRONGCODE").get());
 
-  // Patient gets valid unredeemed code and redeems it
+  // Patient gets valid unredeemed code; tampered far-future redemption timestamp is rejected
   await assertSucceeds(patientDb.collection("patientAccessCodes").doc("FV8K4M2P").get());
+  await assertFails(
+    patientDb.collection("patientAccessCodes").doc("FV8K4M2P").update({
+      redeemedByUid: "patient_uid_1",
+      redeemedAtMillis: Date.now() + 3600000,
+      updatedAt: pastDate(1000),
+    })
+  );
   await assertSucceeds(
     patientDb.collection("patientAccessCodes").doc("FV8K4M2P").update({
       redeemedByUid: "patient_uid_1",

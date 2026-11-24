@@ -26,13 +26,19 @@ import com.example.data.model.Appointment
 import com.example.data.model.Patient
 import com.example.data.model.PatientAccessCode
 import com.example.data.model.PatientStatus
+import java.net.URI
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+import java.security.SecureRandom
 import java.text.SimpleDateFormat
+import java.util.Base64
 import java.util.Calendar
 import java.util.Date
 import java.util.Locale
 import java.util.concurrent.TimeUnit
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 object ReminderNotificationChannels {
     const val CHANNEL_ID = "fonovida_reminders"
@@ -102,6 +108,80 @@ object ReminderScheduler {
 
     const val EXTRA_WHATSAPP_URI = "extra_whatsapp_uri"
     const val EXTRA_WHATSAPP_APPT_ID = "extra_whatsapp_appt_id"
+    const val EXTRA_WHATSAPP_TOKEN = "extra_whatsapp_token"
+
+    private const val INTERNAL_SECRET_PREFS = "fonovida_internal_secrets"
+    private const val KEY_INTENT_HMAC_SECRET = "intent_hmac_secret_b64"
+    private val VALID_WA_PATH_REGEX = Regex("^/(?:[0-9]{10,15})?$")
+    private val VALID_ID_REGEX = Regex("^[a-zA-Z0-9_\\-]{1,128}$")
+
+    fun isValidSafeDocumentId(id: String?): Boolean =
+        !id.isNullOrBlank() && VALID_ID_REGEX.matches(id)
+
+    fun isAllowedWhatsAppUri(rawUrl: String?): Boolean {
+        if (rawUrl.isNullOrBlank() || rawUrl.length > 4096) return false
+        if (rawUrl.any { it.isWhitespace() || it.code < 0x20 || it.code == 0x7F }) return false
+        return try {
+            val parsed = URI(rawUrl)
+            parsed.scheme.equals("https", ignoreCase = true) &&
+                parsed.host.equals("wa.me", ignoreCase = true) &&
+                parsed.rawUserInfo == null &&
+                parsed.userInfo == null &&
+                parsed.port == -1 &&
+                VALID_WA_PATH_REGEX.matches(parsed.rawPath.orEmpty())
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    private fun getOrCreateInternalHmacKey(context: Context): ByteArray {
+        val prefs = context.applicationContext.getSharedPreferences(
+            INTERNAL_SECRET_PREFS,
+            Context.MODE_PRIVATE
+        )
+        val existingB64 = prefs.getString(KEY_INTENT_HMAC_SECRET, null)
+        if (!existingB64.isNullOrBlank()) {
+            try {
+                val decoded = Base64.getDecoder().decode(existingB64)
+                if (decoded.size == 32) return decoded
+            } catch (_: Exception) {
+                // Regenerate corrupted secret
+            }
+        }
+        val secret = ByteArray(32)
+        SecureRandom().nextBytes(secret)
+        val encoded = Base64.getEncoder().encodeToString(secret)
+        prefs.edit().putString(KEY_INTENT_HMAC_SECRET, encoded).apply()
+        return secret
+    }
+
+    fun computeIntentDispatchToken(
+        context: Context,
+        waUrl: String,
+        appointmentId: String
+    ): String {
+        val keyBytes = getOrCreateInternalHmacKey(context)
+        val payload = "${waUrl}\n${appointmentId}".toByteArray(StandardCharsets.UTF_8)
+        val mac = Mac.getInstance("HmacSHA256").apply {
+            init(SecretKeySpec(keyBytes, "HmacSHA256"))
+        }
+        val digest = mac.doFinal(payload)
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(digest)
+    }
+
+    fun verifyIntentDispatchToken(
+        context: Context,
+        waUrl: String,
+        appointmentId: String,
+        providedToken: String?
+    ): Boolean {
+        if (providedToken.isNullOrBlank()) return false
+        val expected = computeIntentDispatchToken(context, waUrl, appointmentId)
+        return MessageDigest.isEqual(
+            expected.toByteArray(StandardCharsets.UTF_8),
+            providedToken.toByteArray(StandardCharsets.UTF_8)
+        )
+    }
 
     fun normalizePhoneForWhatsApp(phone: String): String {
         val clean = phone.filter { it.isDigit() }.trimStart('0')
@@ -203,15 +283,21 @@ object ReminderScheduler {
 
         val waUrl = whatsappMessage?.takeIf { it.isNotBlank() }?.let { msg ->
             buildWhatsAppUrlString(whatsappPhone.orEmpty(), msg)
-        }
+        }?.takeIf { isAllowedWhatsAppUri(it) }
+
+        val safeApptId = whatsappAppointmentId?.takeIf { isValidSafeDocumentId(it) }.orEmpty()
 
         val intent = Intent(context, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
             if (waUrl != null) {
                 putExtra(EXTRA_WHATSAPP_URI, waUrl)
-                if (!whatsappAppointmentId.isNullOrBlank()) {
-                    putExtra(EXTRA_WHATSAPP_APPT_ID, whatsappAppointmentId)
+                if (safeApptId.isNotEmpty()) {
+                    putExtra(EXTRA_WHATSAPP_APPT_ID, safeApptId)
                 }
+                putExtra(
+                    EXTRA_WHATSAPP_TOKEN,
+                    computeIntentDispatchToken(context, waUrl, safeApptId)
+                )
             }
         }
         val pendingIntent = PendingIntent.getActivity(
@@ -809,6 +895,9 @@ object ReminderScheduler {
         waUrl: String,
         fallbackMessage: String = ""
     ): Boolean {
+        if (!isAllowedWhatsAppUri(waUrl)) {
+            return false
+        }
         val waIntent = Intent(
             Intent.ACTION_VIEW,
             Uri.parse(waUrl)
